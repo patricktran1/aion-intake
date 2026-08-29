@@ -1,4 +1,5 @@
 import type { Fact } from "@/lib/domain/types";
+import { sanitizeText } from "./engine";
 
 /**
  * Harvesting: reading what the patient already told us, so we do not ask again.
@@ -50,9 +51,6 @@ const SINCE =
 
 const TREATMENT_TERMS =
   /\b(hydrocortisone|clobetasol|triamcinolone|betamethasone|mometasone|steroid|cortisone|tacrolimus|pimecrolimus|eucerin|cerave|cetaphil|aquaphor|vaseline|moisturi[sz]er|emollient|benzoyl peroxide|salicylic|adapalene|tretinoin|retinoid|differin|clindamycin|doxycycline|minocycline|erythromycin|isotretinoin|accutane|spironolactone|antibiotic|antifungal|antihistamine|benadryl|minoxidil|rogaine|finasteride|biotin|ketoconazole|nizoral|head and shoulders|selsun|lamisil|terbinafine|metronidazole|azelaic|niacinamide|nail lacquer|cream|ointment|lotion|gel|wash|shampoo)\b/i;
-
-const TRIED =
-  /\b(i(?:'ve)?\s+(?:tried|used|been using|been on|take|took|am using|applied)|prescribed|gave me|put me on|currently (?:using|on))\b/i;
 
 /**
  * An explicit "nothing tried" is worth harvesting; a bare "the stuff I've
@@ -191,7 +189,7 @@ export function harvest(text: string, eligibleSlots: string[], at: string): Fact
   const claim = (slot: string, clause: string, refine?: { re: RegExp; kind: "list" | "span" }) => {
     if (claimed.has(slot) || !eligible.has(slot)) return;
     const focused = refine ? focus(clause, refine.re, refine.kind) : clause;
-    const value = focused.trim().replace(/\s+/g, " ").slice(0, MAX_HARVEST_LEN);
+    const value = sanitizeText(focused).trim().replace(/\s+/g, " ").slice(0, MAX_HARVEST_LEN);
     if (value.length < 4) return;
     claimed.add(slot);
     const secondFacet = PARTIAL_SLOTS[slot];

@@ -1,6 +1,6 @@
 import type { Fact, Intake, IntakeBundle, Pathway } from "@/lib/domain/types";
 import { PATHWAY_LABELS } from "@/lib/domain/types";
-import { stripFiller, stripSelfReference, truncate } from "@/lib/interview/engine";
+import { sanitizeText, stripFiller, stripSelfReference, truncate } from "@/lib/interview/engine";
 import { guardAll, type GuardViolation } from "./guard";
 
 /**
@@ -206,7 +206,7 @@ const CONCERN_MAX = 120;
  * an ellipsis when there is no boundary to cut at.
  */
 export function cleanConcern(raw: string): string {
-  const stripped = stripSelfReference(stripFiller(raw).replace(/\s+/g, " ").trim());
+  const stripped = stripSelfReference(stripFiller(sanitizeText(raw)).replace(/\s+/g, " ").trim());
   const firstSentence = stripped.split(/(?<=[.!?])\s+/)[0] ?? stripped;
   const candidate = (firstSentence.length >= 25 ? firstSentence : stripped).replace(/[,;.!]+\s*$/, "");
   if (candidate.length <= CONCERN_MAX) return candidate;
@@ -221,6 +221,7 @@ export function cleanConcern(raw: string): string {
   );
   if (boundary > 45) return window.slice(0, boundary).replace(/[,;]\s*$/, "").trim();
   return truncate(candidate, CONCERN_MAX);
+  // truncate() is surrogate-safe, so the ellipsis fallback never splits an emoji.
 }
 
 /**

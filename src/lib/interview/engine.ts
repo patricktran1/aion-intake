@@ -75,22 +75,67 @@ export function detectPathway(text: string): Pathway {
 
 /**
  * Language that should stop the intake and point the patient at real care.
- * Intentionally narrow and non-diagnostic: it triggers a safety message, never
- * an assessment.
+ *
+ * Intentionally narrow and non-diagnostic: it raises a flag and shows emergency
+ * guidance, never an assessment. Rebuilt from a fragile substring list into
+ * word-bounded regex families per category, because the substring approach both
+ * missed obvious synonyms ("hurting myself", "short of breath") and
+ * false-positived on benign text ("hurt myself shaving", "chest pain when I
+ * press it", "years ago I had a high fever"). Each rule may carry an `unless`
+ * guard that suppresses the accidental-injury, on-palpation, or historical
+ * framings a pre-visit intake must not treat as an emergency.
  */
-const URGENT_SIGNALS = [
-  "trouble breathing", "can't breathe", "cant breathe", "difficulty breathing",
-  "throat closing", "swelling of my face", "face is swelling", "lips are swelling",
-  "anaphylaxis", "chest pain", "passing out", "fainted", "high fever",
-  "skin is peeling off", "blisters in my mouth", "sepsis",
-  "suicidal", "kill myself", "hurt myself", "hurting myself", "harm myself",
-  "harming myself", "end my life", "end it all", "don't want to be here",
-  "dont want to be here", "spreading rapidly", "spreading very fast",
+interface UrgentRule {
+  re: RegExp;
+  unless?: RegExp;
+}
+
+const URGENT_RULES: UrgentRule[] = [
+  // Self-harm — flag clear intent or unambiguous suicidal phrasing only.
+  { re: /\b(kill|end)\s+(myself|my life|it all)\b/i },
+  { re: /\bsuicid/i },
+  { re: /\bwant(?:ing)?\s+to\s+die\b/i },
+  { re: /\bno reason to (?:live|go on)\b/i },
+  { re: /\b(?:don'?t|do not|dont)\s+want to be here\b/i },
+  { re: /\b(?:thoughts? of|thinking about|want to|going to|tempted to|plan to)\s+(?:hurt|harm)(?:ing)?\s+myself\b/i },
+  // A bare "hurt/harm myself" is flagged unless it reads as an accident.
+  {
+    re: /\b(?:hurt|harm)(?:ing)?\s+myself\b/i,
+    unless: /\b(shav|cook|fell|slip|trip|cut(?:ting)?|bump|burn|scratch|garden|work(?:ing)?|accident|knife|razor|door|playing|sport|gym|exercis)\w*/i,
+  },
+  // Breathing difficulty.
+  { re: /\b(?:can'?t|cannot|couldn'?t|cant|hard to|difficulty|trouble|struggling to)\s+breath/i },
+  { re: /\bshort(?:ness)? of breath\b/i },
+  { re: /\bwheez/i },
+  { re: /\bcan'?t catch my breath\b/i },
+  { re: /\bthroat (?:is |feels? |keeps? |getting )?(?:closing|tight|swelling|closing up|tightening)\b/i },
+  // Anaphylaxis / allergic reaction.
+  { re: /\banaphylax/i },
+  { re: /\ballergic reaction\b/i },
+  { re: /\b(?:tongue|lips?|face|throat)\s+(?:is |are |feels? |keeps? )?swelling\b/i },
+  { re: /\bswelling of my (?:face|throat|lips?|tongue)\b/i },
+  // Chest pain / collapse — not the "hurts when I press it" of tender acne.
+  { re: /\bchest pain\b/i, unless: /\b(?:when|if) i press|pressing|to the touch|press on|push on\b/i },
+  { re: /\b(?:passing out|passed out|fainted|about to faint|black(?:ed)? out|blacking out)\b/i },
+  // Systemic / spreading infection.
+  {
+    re: /\bhigh fever\b/i,
+    unless: /\b(?:years? ago|as a (?:kid|child)|when i was|used to|in the past|had it as|back when)\b/i,
+  },
+  { re: /\bred streaks?\b/i },
+  { re: /\b(?:infection|it|redness|area)\s+(?:is )?spreading (?:fast|rapidly|quickly|really fast)/i },
+  { re: /\bspreading (?:fast|rapidly|very fast|quickly)\b/i },
+  { re: /\bcellulitis\b/i },
+  // Skin emergency / severe drug reaction.
+  { re: /\bskin (?:is )?(?:peeling|falling) off\b/i },
+  { re: /\bblisters in my mouth\b/i },
+  { re: /\b(?:whole|entire) body (?:is )?covered\b/i },
+  { re: /\bsepsis\b/i },
 ];
 
 export function detectUrgent(text: string): boolean {
-  const hay = text.toLowerCase();
-  return URGENT_SIGNALS.some((s) => hay.includes(s));
+  const t = text.toLowerCase();
+  return URGENT_RULES.some((rule) => rule.re.test(t) && !(rule.unless && rule.unless.test(t)));
 }
 
 export function slotsForPathway(pathway: Pathway): Slot[] {
@@ -332,7 +377,7 @@ export function extractDeterministic(slot: Slot, answer: string, at: string): Fa
       // Bounded for the same reason the model path is: a 3,000-character
       // answer must not become a 3,000-character row in a physician's brief.
       value: truncate(tidy(trimmed), MAX_FACT_VALUE),
-      verbatim: trimmed.slice(0, MAX_VERBATIM),
+      verbatim: truncate(sanitizeText(trimmed), MAX_VERBATIM),
       certainty,
       source: "patient",
       at,
@@ -340,9 +385,22 @@ export function extractDeterministic(slot: Slot, answer: string, at: string): Fa
   ];
 }
 
+/**
+ * Strip characters that have no place in a clinical record but change how it
+ * reads or serialises: C0/C1 control codes (NUL, BEL), zero-width spaces, and —
+ * most importantly — Unicode bidi overrides (U+202E and the isolates), which a
+ * patient could use to visually reorder "benign"/"malignant" as a physician
+ * reads the brief. Ordinary whitespace (tab, newline) is preserved.
+ */
+export function sanitizeText(text: string): string {
+  return text
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g, "");
+}
+
 /** Sentence-cases and trims without changing a single word of meaning. */
 export function tidy(text: string): string {
-  const t = text.trim().replace(/\s+/g, " ");
+  const t = sanitizeText(text).trim().replace(/\s+/g, " ");
   if (!t) return t;
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
@@ -474,5 +532,13 @@ export function timingFragment(verbatim: string): string {
 
 export function truncate(text: string, max: number): string {
   const t = text.trim();
-  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+  if (t.length <= max) return dropLoneSurrogate(t);
+  return `${dropLoneSurrogate(t.slice(0, max - 1)).trimEnd()}…`;
+}
+
+/** Drop a trailing high surrogate left dangling by a code-unit slice. */
+function dropLoneSurrogate(s: string): string {
+  if (s.length === 0) return s;
+  const last = s.charCodeAt(s.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? s.slice(0, -1) : s;
 }

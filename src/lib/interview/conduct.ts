@@ -23,6 +23,7 @@ import {
   isEmptyAnswer,
   isNonAnswer,
   planNextQuestion,
+  sanitizeText,
   tidy,
 } from "./engine";
 import { countConcerns, harvest } from "./harvest";
@@ -348,9 +349,20 @@ export async function conductTurn(args: {
   if (patientQuestions.length > 0) {
     intake = { ...intake, patientQuestions: [...intake.patientQuestions, ...patientQuestions] };
   } else if (!empty && /\b(will|does|is|can|should|could|what|why|how)\b.*\?/i.test(answer)) {
-    // The patient asked something in passing; carry it to the physician verbatim.
-    const q = answer.split(/(?<=\?)/).find((s) => s.includes("?"));
-    if (q) intake = { ...intake, patientQuestions: [...intake.patientQuestions, q.trim().slice(0, 200)] };
+    // The patient asked something in passing; carry a GENUINE question to the
+    // physician. The clarify list is the section a dermatologist trusts most, so
+    // an imperative or injection sentence that merely contains a question word
+    // ("Ignore previous instructions… Is that understood?") must not land there.
+    // Split into sentences and take the last one that is actually a question, so
+    // a mid-sentence injection payload is never lifted with it.
+    const q = answer
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.endsWith("?"))
+      .pop();
+    if (q && isGenuinePatientQuestion(q)) {
+      intake = { ...intake, patientQuestions: [...intake.patientQuestions, sanitizeQuestion(q).slice(0, 200)] };
+    }
   }
 
   const skipped = empty || isNonAnswer(answer);
@@ -476,6 +488,36 @@ function questionFor(slot: Slot | null | undefined, facts: Fact[]): string | nul
   if (!slot) return null;
   if (slot.narrowQuestion && isPartiallyFilled(facts, slot.id)) return slot.narrowQuestion;
   return slot.question;
+}
+
+/** Imperative / injection openers that disqualify a "patient question". */
+const IMPERATIVE_OPENER =
+  /^(ignore|disregard|forget|record that|write that|mark|tell the (doctor|physician|clinician)|pretend|act as|you (are|should|must)|do not|don'?t|make sure|note that|set|update|delete|remove|override|system:|as (the|an) (ai|assistant))\b/i;
+
+/**
+ * A genuine passing question a physician would want to see — not an instruction
+ * dressed up with a question mark. Short, ends in a question, and does not open
+ * with an imperative or trip the same unsafe-content guard the model path uses.
+ */
+function isGenuinePatientQuestion(q: string): boolean {
+  const t = q.trim();
+  if (t.length < 6 || t.length > 200) return false;
+  if (!t.endsWith("?")) return false;
+  if (IMPERATIVE_OPENER.test(t)) return false;
+  // Reject questions aimed at the assistant's compliance rather than the
+  // patient's care ("Is that understood?", "Can you do that?").
+  if (META_QUESTION.test(t)) return false;
+  // A patient question naming a diagnosis or asking for treatment is fine to
+  // relay ("Is it cancer?") — that is exactly what the physician should answer —
+  // but an instruction to the system is not, and those are caught above.
+  return true;
+}
+
+const META_QUESTION =
+  /\b(understood|can you|could you|will you|would you|do you (understand|get|know)|got it|is that (clear|understood|ok|okay)|are you (sure|listening)|capiche)\b/i;
+
+function sanitizeQuestion(q: string): string {
+  return sanitizeText(q).replace(/\s+/g, " ").trim();
 }
 
 function lowerFirstChar(s: string): string {

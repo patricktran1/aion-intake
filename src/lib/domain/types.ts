@@ -166,7 +166,6 @@ export interface Patient {
   lastName: string;
   /** Demo only. Real deployments should link to the practice's own record. */
   dateOfBirth: string;
-  pronouns?: string;
 }
 
 export interface Practice {

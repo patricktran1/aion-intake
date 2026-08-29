@@ -153,11 +153,11 @@ export function seedData(): Db {
   };
 
   const patients: Patient[] = [
-    { id: "pat_maya", firstName: "Maya", lastName: "Ellison", dateOfBirth: "1991-04-12", pronouns: "she/her" },
-    { id: "pat_robert", firstName: "Robert", lastName: "Osei", dateOfBirth: "1962-11-03", pronouns: "he/him" },
-    { id: "pat_priya", firstName: "Priya", lastName: "Raman", dateOfBirth: "1989-07-22", pronouns: "she/her" },
-    { id: "pat_daniel", firstName: "Daniel", lastName: "Whitaker", dateOfBirth: "2007-02-18", pronouns: "he/him" },
-    { id: "pat_lena", firstName: "Lena", lastName: "Okafor", dateOfBirth: "1978-09-30", pronouns: "she/her" },
+    { id: "pat_maya", firstName: "Maya", lastName: "Ellison", dateOfBirth: "1991-04-12" },
+    { id: "pat_robert", firstName: "Robert", lastName: "Osei", dateOfBirth: "1962-11-03" },
+    { id: "pat_priya", firstName: "Priya", lastName: "Raman", dateOfBirth: "1989-07-22" },
+    { id: "pat_daniel", firstName: "Daniel", lastName: "Whitaker", dateOfBirth: "2007-02-18" },
+    { id: "pat_lena", firstName: "Lena", lastName: "Okafor", dateOfBirth: "1978-09-30" },
   ];
 
   const visits: Visit[] = [

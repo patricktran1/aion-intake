@@ -19,7 +19,8 @@
     "eval:baseline": "tsx evals/run.ts --baseline",
     "eval:gate": "tsx evals/gate.ts",
     "eval:ablate": "tsx evals/ablate.ts",
-    "cost": "tsx scripts/cost.ts"
+    "cost": "tsx scripts/cost.ts",
+    "inspect": "tsx scripts/inspect.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

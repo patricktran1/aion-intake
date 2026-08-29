@@ -11,6 +11,12 @@ a short list of what is still worth asking in the room.
 It is pre-visit preparation. It is not telehealth, not a visit, and not medical
 advice. See `SCOPE.md` for what it deliberately refuses to be.
 
+**Live demo (synthetic data only): <https://aion-intake.vercel.app>**
+Start at [the clinician view](https://aion-intake.vercel.app/clinician) to see
+three finished briefs, or
+[do an intake yourself](https://aion-intake.vercel.app/intake/demoacne0000acne0000demo0000)
+and then read your own.
+
 ---
 
 ## Run it

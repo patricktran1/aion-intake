@@ -19,6 +19,9 @@ export async function POST(req: Request, { params }: Params) {
   if (!allow(intakeKey(token, "photo"), LIMITS.photoUpload)) {
     return fail("You're going a little fast — give it a moment and try again.", 429);
   }
+  if (bundle.intake.status === "ready_for_review" || bundle.intake.status === "reviewed") {
+    return fail("This intake has been submitted — photos can no longer be changed.", 409);
+  }
 
   let body: unknown;
   try {

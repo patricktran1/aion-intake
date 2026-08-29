@@ -143,9 +143,11 @@ describe("model HPI acceptance", () => {
 });
 
 describe("what the intake did not establish", () => {
-  it("names only sections with no answer at all", () => {
+  it("names only sections with no answer at all, annotated with why", () => {
     const b = bundleFor("pat_maya");
-    expect(notEstablished(b.intake)).toEqual(["New exposures"]);
+    // Maya's seeded intake never asked about exposures, and the physician can
+    // see that it was never asked rather than declined.
+    expect(notEstablished(b.intake)).toEqual(["New exposures (not asked)"]);
   });
 
   it("returns nothing when every section was covered", () => {

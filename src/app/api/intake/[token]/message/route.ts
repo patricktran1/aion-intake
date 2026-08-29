@@ -16,6 +16,12 @@ export async function POST(req: Request, { params }: Params) {
     // Duplicate submit or a stale tab. Return current state rather than erroring.
     return json(patientView(bundle));
   }
+  if (bundle.intake.status === "not_started") {
+    // A message can only follow Start — anything else is a stale tab or a
+    // hand-crafted request. Answering it would create an interview with no
+    // opening question.
+    return fail("This intake hasn't been started yet.", 409);
+  }
 
   let body: unknown;
   try {

@@ -72,7 +72,7 @@ const ALLERGY_STATEMENT = /\b(allergic to|allergy to|allergies?\b[^.!?]{0,20}\b(
 const FAMILY_STATEMENT =
   /\b(my (?:mum|mom|mother|dad|father|brother|sister|son|daughter|aunt|uncle|grandmother|grandfather|parents?|family)\b|runs in (?:my|the) family|family history)\b/i;
 
-const ATOPY_TERMS = /\b(eczema|asthma|hay ?fever|atopic|allergies)\b/i;
+const ATOPY_TERMS = /\b(eczema|asthma|hay ?fever|atopic|allergies|psoriasis|skin (?:conditions?|problems?|issues?))\b/i;
 /**
  * A first-person present-tense belief about a diagnosis ("I know this is
  * melanoma") is the patient's opinion, not a history. It must not be filed
@@ -83,6 +83,10 @@ const SELF_DIAGNOSIS =
 
 const SUN_TERMS =
   /\b(sun ?burn(?:s|ed|t)?|tanning|sun ?bed|outdoors?|roof(?:ing|er)|sail|beach|melanoma|skin cancer|basal cell|squamous)\b/i;
+/** Actual pattern language — the shape of hair loss, not where it is. */
+const HAIR_PATTERN_TERMS =
+  /\b(overall thinning|thinning all over|all.over thinning|widening part|part (?:is|looks) wider|receding hairline|hairline (?:is )?receding|bald (?:patch|patches|spot|spots)|round patches|patchy (?:loss|hair loss)|diffuse (?:shedding|thinning|loss)|coming out in handfuls|thinning on top|temples? (?:are )?receding)\b/i;
+
 const HAIRCARE_TERMS =
   /\b(braid(?:s|ed|ing)?|weave|extensions?|relax(?:er|ed|ing)|perm|straighten(?:er|ing)?|blow ?dr(?:y|ier)|flat ?iron|dye|colou?r(?:ed|ing)? my hair|ponytail|bun|tight)\b/i;
 const TRIGGER_TERMS =
@@ -105,6 +109,7 @@ const SIGNALS: HarvestSignal[] = [
   { slots: ["context"], test: MEDICATION_STATEMENT, label: "medication" },
   { slots: ["atopy"], test: new RegExp(`${FAMILY_STATEMENT.source}[^.!?]{0,80}${ATOPY_TERMS.source}|${ATOPY_TERMS.source}[^.!?]{0,80}${FAMILY_STATEMENT.source}`, "i"), label: "atopy" },
   { slots: ["sun_history"], test: SUN_TERMS, label: "sun", reject: SELF_DIAGNOSIS },
+  { slots: ["hair_pattern"], test: HAIR_PATTERN_TERMS, label: "hair pattern" },
   { slots: ["hair_care"], test: HAIRCARE_TERMS, label: "hair care" },
   { slots: ["exposures"], test: EXPOSURE_TERMS, label: "exposure" },
   { slots: ["triggers", "acne_pattern"], test: TRIGGER_TERMS, label: "trigger" },
@@ -189,7 +194,14 @@ export function harvest(text: string, eligibleSlots: string[], at: string): Fact
   const claim = (slot: string, clause: string, refine?: { re: RegExp; kind: "list" | "span" }) => {
     if (claimed.has(slot) || !eligible.has(slot)) return;
     const focused = refine ? focus(clause, refine.re, refine.kind) : clause;
-    const value = sanitizeText(focused).trim().replace(/\s+/g, " ").slice(0, MAX_HARVEST_LEN);
+    const value = sanitizeText(focused)
+      .trim()
+      .replace(/\s+/g, " ")
+      // A clause split mid-sentence keeps its conjunction and stop — "and my
+      // dad has psoriasis." reads badly as a brief row.
+      .replace(/^(?:and|but|then|also|plus|so)\s+/i, "")
+      .replace(/[.;,]+$/, "")
+      .slice(0, MAX_HARVEST_LEN);
     if (value.length < 4) return;
     claimed.add(slot);
     const secondFacet = PARTIAL_SLOTS[slot];
@@ -208,7 +220,11 @@ export function harvest(text: string, eligibleSlots: string[], at: string): Fact
   };
 
   // Location needs a body site AND enough context that it is not incidental.
-  const locationSlots = ["location", "acne_distribution", "hair_pattern"].filter((s) => eligible.has(s));
+  // A body-site mention can settle location/distribution, but NOT hair_pattern:
+  // "near my hairline" is a place, while the pattern question asks about the
+  // SHAPE of loss (diffuse vs patchy vs receding). Settling pattern from a site
+  // mention silently discarded the real answer.
+  const locationSlots = ["location", "acne_distribution"].filter((s) => eligible.has(s));
   if (locationSlots.length > 0) {
     const clause = firstMatchingClause(trimmed, LOCATION_RE);
     if (clause && LOCATION_RE.test(clause)) {

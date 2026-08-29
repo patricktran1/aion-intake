@@ -93,6 +93,7 @@ export function blankIntake(visitId: string, token = newToken()): Intake {
     questionCount: 0,
     concernCount: 1,
     consecutiveSkips: 0,
+    slotOutcomes: {},
     lastActivityAt: now(),
     voiceTurns: 0,
     textTurns: 0,

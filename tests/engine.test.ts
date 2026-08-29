@@ -173,9 +173,25 @@ describe("clarify-in-visit", () => {
     };
   };
 
-  it("flags a high-value question the patient did not answer", () => {
-    const out = computeOpenQuestions({ pathway: "rash", facts: [], askedSlots: ["location"] });
-    expect(out.some((q) => q.includes("Location") && q.includes("did not answer"))).toBe(true);
+  it("flags a high-value question the patient skipped", () => {
+    const out = computeOpenQuestions({
+      pathway: "rash",
+      facts: [],
+      askedSlots: ["location"],
+      slotOutcomes: { location: "skipped" },
+    });
+    expect(out.some((q) => q.includes("Location") && q.includes("skipped"))).toBe(true);
+  });
+
+  it("distinguishes 'the patient did not know' from a skip", () => {
+    const out = computeOpenQuestions({
+      pathway: "rash",
+      facts: [],
+      askedSlots: ["location"],
+      slotOutcomes: { location: "unsure" },
+    });
+    expect(out.some((q) => q.includes("did not know"))).toBe(true);
+    expect(out.some((q) => q.includes("skipped"))).toBe(false);
   });
 
   it("ignores a low-value question the patient did not answer", () => {

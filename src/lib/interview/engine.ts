@@ -444,7 +444,10 @@ const MAX_CLARIFY = 4;
  * could not pin down. Everything else is dropped.
  */
 export function computeOpenQuestions(
-  intake: Pick<Intake, "pathway" | "facts" | "askedSlots"> & { concernCount?: number },
+  intake: Pick<Intake, "pathway" | "facts" | "askedSlots"> & {
+    concernCount?: number;
+    slotOutcomes?: Record<string, "answered" | "unsure" | "skipped">;
+  },
 ): string[] {
   const items: ClarifyItem[] = [];
   const highValue = HIGH_VALUE[intake.pathway];
@@ -457,6 +460,8 @@ export function computeOpenQuestions(
     });
   }
 
+  const contradiction = timelineContradiction(intake.facts);
+
   for (const slotId of intake.askedSlots) {
     const slot = findSlot(intake.pathway, slotId);
     if (!slot) continue;
@@ -464,15 +469,22 @@ export function computeOpenQuestions(
     const isHigh = highValue.includes(slotId);
 
     if (facts.length === 0) {
-      // Asked and not answered. Only worth a line if it mattered.
+      // Asked and not answered. Only worth a line if it mattered — and "the
+      // patient did not know" is different information from "they skipped it".
       if (isHigh) {
-        items.push({ score: 80, text: `${slot.briefLabel} — asked, but the patient did not answer.` });
+        const outcome = intake.slotOutcomes?.[slotId];
+        const text =
+          outcome === "unsure"
+            ? `${slot.briefLabel} — asked; the patient did not know.`
+            : `${slot.briefLabel} — asked, but the patient skipped it.`;
+        items.push({ score: 80, text });
       }
       continue;
     }
 
     const isTimeline = slotId === "timeline" || slotId === "lesion_timeline";
-    if (isTimeline && facts.some((f) => f.certainty === "approximate")) {
+    // The contradiction line (below) supersedes the softer estimate line.
+    if (isTimeline && !contradiction && facts.some((f) => f.certainty === "approximate")) {
       const hedged = facts.find((f) => f.certainty === "approximate")!;
       items.push({
         score: 70,
@@ -488,6 +500,15 @@ export function computeOpenQuestions(
         items.push({ score: 60, text: `${slot.briefLabel} — what they tried is recorded, the response is not.` });
       }
     }
+  }
+
+  // Two different timelines across separate answers is a discrepancy the
+  // physician should see — the product must never silently pick a winner.
+  if (contradiction) {
+    items.push({
+      score: 75,
+      text: `Patient gave two different timelines — "${timingSnippet(contradiction[0])}" and "${timingSnippet(contradiction[1])}" — confirm which.`,
+    });
   }
 
   // Core slots the budget never reached, high value only.
@@ -518,12 +539,82 @@ export function computeOpenQuestions(
     .map((i) => i.text);
 }
 
+const NUM_WORDS: Record<string, string> = {
+  one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7",
+  eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12",
+  a: "1", an: "1", couple: "2", few: "3", several: "4",
+};
+
+const DURATION_MENTION =
+  /\b(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|couple|few|several)\s+(?:of\s+)?)?(day|week|month|year)s?\b/gi;
+
+/**
+ * Normalized duration mentions in a text — "maybe 4 months" -> "4 month".
+ * Used to notice when a patient gives two different timelines across answers,
+ * which is a discrepancy the physician should see rather than either version
+ * being silently trusted.
+ */
+export function extractDurations(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.toLowerCase().matchAll(DURATION_MENTION)) {
+    const qty = m[1] ? (NUM_WORDS[m[1]] ?? m[1]) : "";
+    if (!qty) continue; // a bare "months" carries no comparable quantity
+    out.add(`${qty} ${m[2]}`);
+  }
+  return [...out];
+}
+
 /**
  * The part of an answer that carries the timing, so a clarify line quotes
  * "maybe 4 months" rather than three hundred characters of opening statement.
  */
 const HEDGED_TIMING =
   /\b(?:i think|maybe|about|around|roughly|probably|possibly)\b[^.,;!?/]{0,25}|\bsince\s+[a-z]+\b/i;
+
+/**
+ * Timeline STATEMENTS: the concern, plus each timeline answer — with a merged
+ * narrowed-follow-up fact split back into its two original statements (the
+ * merge records them as "A / B" in verbatim). Compared across statements, not
+ * within one, so a single sentence containing two durations ("flares last two
+ * weeks, going on six months") is never a false positive.
+ */
+function timelineStatements(facts: Pick<Fact, "slot" | "verbatim">[]): string[] {
+  const out: string[] = [];
+  for (const f of facts) {
+    if (!["concern", "timeline", "lesion_timeline"].includes(f.slot)) continue;
+    for (const seg of f.verbatim.split(" / ")) {
+      const t = seg.trim();
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
+
+/**
+ * The first pair of separate statements whose duration mentions are entirely
+ * disjoint — the patient corrected themselves, and both versions must surface.
+ */
+export function timelineContradiction(facts: Pick<Fact, "slot" | "verbatim">[]): [string, string] | null {
+  const statements = timelineStatements(facts);
+  for (let i = 0; i < statements.length; i += 1) {
+    for (let j = i + 1; j < statements.length; j += 1) {
+      const a = extractDurations(statements[i]);
+      const b = extractDurations(statements[j]);
+      if (a.length > 0 && b.length > 0 && !a.some((d) => b.includes(d)) && !b.some((d) => a.includes(d))) {
+        return [statements[i], statements[j]];
+      }
+    }
+  }
+  return null;
+}
+
+/** A short duration-bearing fragment for quoting in a clarify line. */
+export function timingSnippet(verbatim: string): string {
+  const m = verbatim.match(
+    /(?:[a-z']+\s+){0,3}\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|a|an|couple|few|several)\s+(?:of\s+)?(?:day|week|month|year)s?(?:\s+ago)?\b/i,
+  );
+  return truncate((m ? m[0] : verbatim).trim(), 48);
+}
 
 export function timingFragment(verbatim: string): string {
   const m = verbatim.match(HEDGED_TIMING);

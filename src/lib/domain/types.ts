@@ -135,6 +135,13 @@ export const intakeSchema = z.object({
   concernCount: z.number().default(1),
   /** Consecutive unanswered questions. Used to stop grinding a silent patient. */
   consecutiveSkips: z.number().default(0),
+  /**
+   * How each asked slot resolved. The physician-facing distinction between
+   * "answered", "the patient did not know", and "the patient skipped it" —
+   * which must never collapse into one another, and none of which is the same
+   * as "never asked".
+   */
+  slotOutcomes: z.record(z.string(), z.enum(["answered", "unsure", "skipped"])).default({}),
   startedAt: z.string().optional(),
   submittedAt: z.string().optional(),
   lastActivityAt: z.string(),

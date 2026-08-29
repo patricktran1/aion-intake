@@ -210,6 +210,23 @@ export async function conductTurn(args: {
   let intake = args.intake;
   const answer = args.answer.trim();
 
+  // Idempotency: once the interview has ended (the last turn is the patient's
+  // and no further question is planned), a retried or late POST must be a
+  // no-op — otherwise a network retry of the final answer appends a duplicate
+  // message and re-plans against mutated state.
+  const lastMessage = intake.messages[intake.messages.length - 1];
+  if (lastMessage?.role === "patient") {
+    const alreadyDone = planNextQuestion({
+      pathway: intake.pathway,
+      facts: intake.facts,
+      askedSlots: intake.askedSlots,
+      questionCount: intake.questionCount,
+    });
+    if (!alreadyDone.slot) {
+      return { intake, nextQuestion: null, finished: true };
+    }
+  }
+
   const lastAssistant = [...intake.messages].reverse().find((m) => m.role === "assistant");
   const askedSlotId = lastAssistant?.targets[0] ?? OPENING_SLOT.id;
   const isOpening = askedSlotId === OPENING_SLOT.id;
@@ -299,11 +316,23 @@ export async function conductTurn(args: {
   const priorPartial = intake.facts.find(
     (f) => f.slot === askedSlot.id && f.partial === true && f.harvested === true,
   );
+  // Word-level overlap, not whole-string containment: "six months, getting
+  // worse" does not *contain* "for six months", but it plainly repeats it, and
+  // joining the two produced a garbled "For six months; six months, getting
+  // worse" row.
+  const contentWords = (t: string) =>
+    t.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2);
+  const overlapRatio = (a: string, b: string) => {
+    const wa = contentWords(a);
+    if (wa.length === 0) return 1;
+    const wb = new Set(contentWords(b));
+    return wa.filter((w) => wb.has(w)).length / wa.length;
+  };
   const mergeAddsSomething =
     priorPartial !== undefined &&
     facts.length > 0 &&
-    !facts[0].value.toLowerCase().includes(priorPartial.value.toLowerCase()) &&
-    !priorPartial.value.toLowerCase().includes(facts[0].value.toLowerCase());
+    overlapRatio(priorPartial.value, facts[0].value) < 0.6 &&
+    overlapRatio(facts[0].value, priorPartial.value) < 0.6;
 
   if (priorPartial && facts.length > 0 && mergeAddsSomething) {
     const merged: Fact = {
@@ -366,9 +395,15 @@ export async function conductTurn(args: {
   }
 
   const skipped = empty || isNonAnswer(answer);
+  const outcome: "answered" | "unsure" | "skipped" = empty
+    ? "skipped"
+    : isNonAnswer(answer)
+      ? "unsure"
+      : "answered";
   intake = {
     ...intake,
     consecutiveSkips: skipped ? intake.consecutiveSkips + 1 : 0,
+    slotOutcomes: { ...intake.slotOutcomes, [askedSlot.id]: outcome },
   };
 
   // A patient who has stopped answering is not going to start. Ending early is

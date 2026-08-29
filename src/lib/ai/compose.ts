@@ -1,6 +1,6 @@
 import type { Fact, Intake, IntakeBundle, Pathway } from "@/lib/domain/types";
 import { PATHWAY_LABELS } from "@/lib/domain/types";
-import { sanitizeText, stripFiller, stripSelfReference, truncate } from "@/lib/interview/engine";
+import { sanitizeText, stripFiller, stripSelfReference, timelineContradiction, timingSnippet, truncate } from "@/lib/interview/engine";
 import { guardAll, type GuardViolation } from "./guard";
 
 /**
@@ -25,6 +25,8 @@ export interface BriefItem {
   slot: string;
   /** Volunteered in a longer answer rather than given to a direct question. */
   harvested: boolean;
+  /** The patient answered with a bare negative, rendered via NEGATIVE_PHRASING. */
+  isBareNegative?: boolean;
 }
 
 export const sourcesFrom = (facts: Fact[]): string[] =>
@@ -73,6 +75,7 @@ function itemsFor(intake: Intake, slotIds: string[]): BriefItem[] {
   return intake.facts
     .filter((f) => slotIds.includes(f.slot) && f.value.trim())
     .map((f) => ({
+      isBareNegative: BARE_NEGATIVE.test(f.value.trim()),
       // A patient who tells their whole story in the opening answer should get
       // a readable concern line, not a paragraph. The full text is still on the
       // item as `verbatim`, so nothing is lost — it moves behind "show the
@@ -167,6 +170,11 @@ export function buildBrief(intake: Intake): BriefSection[] {
     .map((g) => ({
       label: g.label,
       items: itemsFor(intake, g.slots).filter((item) => {
+        // De-dup exists for a patient repeating one sentence across several
+        // questions. A rendered bare negative ("None reported") is SYSTEM
+        // phrasing — two different slots the patient separately denied must
+        // both stay visible, so negatives are exempt.
+        if (item.isBareNegative) return true;
         const k = key(item.text);
         if (k.length < 12) return true;
         if (seen.has(k)) return false;
@@ -188,10 +196,20 @@ export function notEstablished(intake: Intake): string[] {
   const answered = new Set(
     intake.facts.filter((f) => f.value.trim().length > 0).map((f) => f.slot),
   );
+  const askedSet = new Set(intake.askedSlots);
   return SECTIONS[intake.pathway]
     .filter((g) => g.slots.every((sl) => !answered.has(sl)))
     .filter((g) => g.label !== "Primary concern")
-    .map((g) => g.label);
+    .map((g) => {
+      // ASKED-but-unresolved is different information from NEVER-ASKED, and a
+      // physician reading "not established" needs to know which — "didn't
+      // know" is itself a finding for a lesion timeline.
+      const asked = g.slots.find((sl) => askedSet.has(sl));
+      if (!asked) return `${g.label} (not asked)`;
+      const outcome = intake.slotOutcomes?.[asked];
+      if (outcome === "unsure") return `${g.label} (asked — patient did not know)`;
+      return `${g.label} (asked — skipped)`;
+    });
 }
 
 /** First sentence, filler removed — what the concern would look like tidied. */
@@ -240,7 +258,14 @@ export function headline(intake: Intake): string {
   if (!timeline) return base;
 
   const DURATION_WORD = /\b(year|month|week|day)s?\b|\bsince\b/i;
-  if (DURATION_WORD.test(base) && DURATION_WORD.test(timeline.value)) return base;
+  if (DURATION_WORD.test(base) && DURATION_WORD.test(timeline.value)) {
+    // Both carry a duration. If they agree, appending is repetition; if the
+    // patient CORRECTED the timeline in a later statement, hiding it would make
+    // the headline assert a timeline the patient superseded.
+    const contradiction = timelineContradiction(intake.facts);
+    if (!contradiction) return base;
+    return `${base} — later said "${timingSnippet(contradiction[1])}"`;
+  }
   if (overlaps(base, timeline.value)) return base;
 
   const suffix = headlineTimeline(renderFactValue(timeline));

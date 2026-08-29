@@ -43,6 +43,12 @@ export async function PATCH(req: Request, { params }: Params) {
     );
     const parsed = clinicianReviewSchema.safeParse({ ...intake.review, ...incoming });
     if (!parsed.success) return fail("Invalid review fields.", 400);
+    // "reviewed" is a state a submitted intake moves into — never a jump from
+    // not_started/in_progress, which would hide an unfinished intake from the
+    // patient while the clinician thinks it is done.
+    if (intake.status !== "ready_for_review" && intake.status !== "reviewed") {
+      return fail("This intake has not been submitted yet.", 409);
+    }
     intake = {
       ...intake,
       review: { ...parsed.data, updatedAt: new Date().toISOString() },

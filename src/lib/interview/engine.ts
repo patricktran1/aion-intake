@@ -259,6 +259,38 @@ export function isEmptyAnswer(text: string): boolean {
 const OPENING_FILLER =
   /^(?:ok(?:ay)?|so|well|hi|hello|um+|uh+|erm|basically|right|yeah|yes|hey)\b[,\s]*/i;
 
+/**
+ * Leading first-person framing, removed.
+ *
+ * "I've been breaking out along my jaw" and "Breaking out along my jaw" carry
+ * exactly the same clinical content; the first reads as a chat log and the
+ * second reads as a record. This only ever *removes* a fixed set of leading
+ * words — it never rewrites, reorders, or introduces anything, so it cannot
+ * change what the patient said.
+ */
+const SELF_REFERENCE_PREFIXES = [
+  "i've had this ", "i have had this ", "i've had ", "i have had ", "i had this ", "i had ",
+  "i've been having ", "i've been getting ", "i've been ", "i have been ", "i am having ",
+  "i've got this ", "i've got ", "i have got ", "i have this ", "i have ",
+  "i keep getting ", "i keep ", "i get this ", "i get ", "i am ", "i'm ",
+  "i noticed ", "i've noticed ", "i have noticed ", "i found ", "i developed ",
+  "there's a ", "there is a ", "there's this ", "there is this ", "there's ", "there is ",
+  "there are ", "i want help with ", "i need help with ",
+];
+
+export function stripSelfReference(text: string): string {
+  const t = text.trim();
+  const lower = t.toLowerCase();
+  // Longest prefix first, so "i've had this " wins over "i have ".
+  const prefix = SELF_REFERENCE_PREFIXES.find((p) => lower.startsWith(p));
+  if (!prefix) return t;
+
+  const stripped = t.slice(prefix.length).trim();
+  // Never strip so much that nothing useful is left.
+  if (stripped.length < 12) return t;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
 export function stripFiller(text: string): string {
   let t = text.trim();
   for (let i = 0; i < 3; i += 1) {

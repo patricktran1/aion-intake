@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conductTurn, startIntake } from "@/lib/interview/conduct";
+import { conductTurn, isGroundedRestatement, parseTurn, startIntake } from "@/lib/interview/conduct";
 import { blankIntake } from "@/lib/demo/seed";
 import { acceptOrFallbackHpi, buildBrief, composeHpiDeterministic, headline } from "@/lib/ai/compose";
 import { guardAll } from "@/lib/ai/guard";
@@ -296,5 +296,111 @@ describe("model output is held to the same standard", () => {
     const good =
       "Patient reports an itchy rash affecting both forearms, present for about three weeks. They describe the location as both forearms and the duration as three weeks.";
     expect(acceptOrFallbackHpi(good, b).accepted).toBe(true);
+  });
+});
+
+describe("the model's restatement is grounded, not just its quote", () => {
+  const at = new Date().toISOString();
+
+  it("accepts a restatement built from the patient's own words", () => {
+    expect(
+      isGroundedRestatement("Itchy rash on both arms", "I have an itchy rash on both my arms"),
+    ).toBe(true);
+  });
+
+  it("accepts a rearrangement that adds only connective words", () => {
+    expect(
+      isGroundedRestatement(
+        "Started on the elbows, now also the neck",
+        "it started on my elbows and now it's on my neck too",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a duration the patient never gave", () => {
+    expect(isGroundedRestatement("Rash for three months", "I've had a rash a while")).toBe(false);
+  });
+
+  it("rejects a body site the patient never named", () => {
+    expect(
+      isGroundedRestatement("Rash on the trunk and thighs", "I have a rash on my arms"),
+    ).toBe(false);
+  });
+
+  it("rejects a drug name the patient never used", () => {
+    expect(
+      isGroundedRestatement("Tried triamcinolone ointment", "I used some cream from the chemist"),
+    ).toBe(false);
+  });
+
+  it("falls back to the patient's words when the restatement is not grounded", () => {
+    const parsed = parseTurn(
+      {
+        facts: [
+          {
+            slot: "timeline",
+            value: "Symptoms began three months ago",
+            verbatim: "a while",
+            certainty: "stated",
+          },
+        ],
+        patient_questions: [],
+        next_question: "",
+      },
+      ["timeline"],
+      "I've had it a while",
+      at,
+    );
+    expect(parsed?.facts[0].value.toLowerCase()).toContain("a while");
+    expect(parsed?.facts[0].value).not.toContain("three months");
+  });
+
+  it("keeps a grounded restatement as the model wrote it", () => {
+    const parsed = parseTurn(
+      {
+        facts: [
+          {
+            slot: "location",
+            value: "Both forearms and the neck",
+            verbatim: "both forearms",
+            certainty: "stated",
+          },
+        ],
+        patient_questions: [],
+        next_question: "",
+      },
+      ["location"],
+      "it's on both forearms and my neck",
+      at,
+    );
+    expect(parsed?.facts[0].value).toBe("Both forearms and the neck");
+  });
+
+  it("discards a patient question the model composed rather than quoted", () => {
+    const parsed = parseTurn(
+      {
+        facts: [{ slot: "goal", value: "Wants it gone", verbatim: "want it gone", certainty: "stated" }],
+        patient_questions: ["Could this be skin cancer?"],
+        next_question: "",
+      },
+      ["goal"],
+      "I just want it gone",
+      at,
+    );
+    expect(parsed?.patientQuestions).toEqual([]);
+  });
+
+  it("keeps a patient question the patient actually asked", () => {
+    const parsed = parseTurn(
+      {
+        facts: [{ slot: "goal", value: "Wants to know if it will scar", verbatim: "will it scar", certainty: "stated" }],
+        patient_questions: ["Will it scar?"],
+        next_question: "",
+      },
+      ["goal"],
+      "mostly I want to know, will it scar?",
+      at,
+    );
+    expect(parsed?.patientQuestions).toEqual(["Will it scar?"]);
   });
 });

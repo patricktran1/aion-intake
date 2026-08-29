@@ -19,6 +19,26 @@ const STATUS_LABEL: Record<string, string> = {
  * This screen exists only to get the dermatologist into the brief. Anything
  * that would make it feel like an EHR homepage has been deliberately left out.
  */
+/**
+ * A physician scanning this list is asking "who am I seeing next", not "what
+ * date is it". Relative days answer that; the date is there for the two or
+ * three cases where it matters.
+ */
+function relativeDay(iso: string): { label: string; soon: boolean } {
+  const target = new Date(iso);
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(target) - startOfDay(new Date())) / 86_400_000);
+  if (days === 0) return { label: "Today", soon: true };
+  if (days === 1) return { label: "Tomorrow", soon: true };
+  if (days > 1 && days < 7) {
+    return { label: target.toLocaleDateString("en-US", { weekday: "long" }), soon: false };
+  }
+  return {
+    label: target.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    soon: false,
+  };
+}
+
 export default function ClinicianList() {
   const rows = listBundles().map(listRow);
   const ready = rows.filter((r) => r.status === "ready_for_review");
@@ -67,12 +87,15 @@ export default function ClinicianList() {
                       <div className="font-medium text-ink">{r.patientName}</div>
                       <div className="text-[13px] text-muted">DOB {r.dateOfBirth}</div>
                     </td>
-                    <td className="hidden px-5 py-4 text-[14px] text-ink-soft sm:table-cell">
-                      {new Date(r.scheduledFor).toLocaleDateString("en-US", {
-                        weekday: "short",
-                        month: "short",
-                        day: "numeric",
-                      })}
+                    <td className="hidden px-5 py-4 text-[14px] sm:table-cell">
+                      {(() => {
+                        const when = relativeDay(r.scheduledFor);
+                        return (
+                          <span className={when.soon ? "font-medium text-ink" : "text-ink-soft"}>
+                            {when.label}
+                          </span>
+                        );
+                      })()}
                       <div className="text-[13px] text-muted">{r.reasonBooked}</div>
                     </td>
                     <td className="max-w-[26rem] px-5 py-4">

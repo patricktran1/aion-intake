@@ -154,7 +154,9 @@ describe("the model failing never blocks the patient", () => {
       at,
     );
     expect(parsed?.facts).toHaveLength(1);
-    expect(parsed?.patientQuestions).toEqual(["Will it scar?"]);
+    // "Will it scar?" is dropped: the patient never asked it, and the brief
+    // renders these as a quotation from them.
+    expect(parsed?.patientQuestions).toEqual([]);
   });
 
   it("produces a usable HPI with no model configured at all", async () => {

@@ -221,7 +221,7 @@ export function seedData(): Db {
     "rash",
     mayaTranscript,
     [
-      fact("concern", "Itchy rash on both arms for about three months, worst at night", "I've had this itchy rash on both my arms for about three months and it's driving me crazy at night.", "approximate"),
+      fact("concern", "I've had this itchy rash on both my arms for about three months and it's driving me crazy at night.", "I've had this itchy rash on both my arms for about three months and it's driving me crazy at night.", "approximate"),
       fact("location", "Started on the insides of both elbows; now also on neck and some on hands", "It started on the insides of both elbows and now it's on my neck too, and a bit on my hands."),
       fact("timeline", "Started around May; worse since the weather turned cold", "I think around May? It got much worse once the weather turned cold.", "approximate"),
       fact("symptoms", "Very itchy, especially at night; painful only when scratched raw", "Really itchy, especially at night. Not painful unless I scratch it raw."),
@@ -299,7 +299,7 @@ export function seedData(): Db {
     "lesion",
     robertTranscript,
     [
-      fact("concern", "Dark spot on the upper back that his wife says has changed", "There's a dark spot on my upper back that my wife says has changed. I want it looked at."),
+      fact("concern", "There's a dark spot on my upper back that my wife says has changed. I want it looked at.", "There's a dark spot on my upper back that my wife says has changed. I want it looked at."),
       fact("location", "Upper back, left side near the shoulder blade; single spot", "Upper back, left side, near the shoulder blade. It's just the one spot."),
       fact("lesion_timeline", "Present for years; reported by his wife as darker and larger than before — he cannot see it himself", "I've had something there for years but she says it's darker and bigger than it used to be. I can't see it myself.", "approximate"),
       fact("lesion_symptoms", "Bled once after catching on a towel; no pain", "It caught on a towel once and bled a little. No pain."),
@@ -376,7 +376,7 @@ export function seedData(): Db {
     "hair_loss",
     priyaTranscript,
     [
-      fact("concern", "Heavy hair shedding in the shower for the last few months with a widening part", "My hair has been falling out a lot in the shower for the last few months and my part looks wider.", "approximate"),
+      fact("concern", "My hair has been falling out a lot in the shower for the last few months and my part looks wider.", "My hair has been falling out a lot in the shower for the last few months and my part looks wider.", "approximate"),
       fact("hair_pattern", "Widening part with heavy shedding; no bald patches", "Widening part mostly, and a lot of shedding. No bald patches."),
       fact("timeline", "Started around four months ago; shedding slowing somewhat, part still wide", "Around four months ago. The shedding seems to be slowing down a bit now but the part is still wide.", "approximate"),
       fact("hair_scalp", "Scalp looks normal to her; no itch or pain", "It looks normal. Doesn't itch or hurt."),

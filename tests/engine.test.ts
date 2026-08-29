@@ -4,6 +4,7 @@ import {
   computeOpenQuestions,
   isNonAnswer,
   stripFiller,
+  stripSelfReference,
   coreComplete,
   detectPathway,
   detectUrgent,
@@ -290,6 +291,46 @@ describe("non-answers", () => {
   it("never stores a non-answer as a fact", () => {
     expect(extractDeterministic(OPENING_SLOT, "not sure", "t")).toEqual([]);
     expect(extractDeterministic(OPENING_SLOT, "idk", "t")).toEqual([]);
+  });
+});
+
+describe("self-reference stripping", () => {
+  it.each([
+    ["I've had this itchy rash on both arms for months", "Itchy rash on both arms for months"],
+    ["I keep breaking out along my jaw and chin", "Breaking out along my jaw and chin"],
+    ["There's a dark spot on my upper back", "Dark spot on my upper back"],
+    ["I noticed a new mole on my shoulder", "A new mole on my shoulder"],
+  ])("turns %s into a line that reads like a record", (input, expected) => {
+    expect(stripSelfReference(input)).toBe(expected);
+  });
+
+  it("leaves a concern that is already a noun phrase alone", () => {
+    expect(stripSelfReference("Widening part with heavy shedding")).toBe(
+      "Widening part with heavy shedding",
+    );
+    expect(stripSelfReference("My hair is coming out in handfuls")).toBe(
+      "My hair is coming out in handfuls",
+    );
+  });
+
+  it("never strips so much that nothing useful is left", () => {
+    expect(stripSelfReference("I have a rash")).toBe("I have a rash");
+    expect(stripSelfReference("I'm itchy")).toBe("I'm itchy");
+  });
+
+  it("only ever removes words, never introduces any", () => {
+    const inputs = [
+      "I've had this itchy rash on both arms",
+      "There's a spot on my nose that keeps bleeding",
+      "I get deep painful cystic pimples along my jaw",
+    ];
+    for (const input of inputs) {
+      const out = stripSelfReference(input).toLowerCase();
+      const source = input.toLowerCase();
+      for (const word of out.split(/\s+/)) {
+        expect(source, `"${word}" must come from the patient`).toContain(word.replace(/[^a-z']/g, ""));
+      }
+    }
   });
 });
 

@@ -55,6 +55,48 @@ interface RawTurn {
   next_question?: unknown;
 }
 
+/** Words too common to say anything about whether a restatement is grounded. */
+const FILLER_WORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "is", "are", "was", "were", "be", "been",
+  "it", "its", "this", "that", "these", "those", "i", "my", "me", "we", "our",
+  "he", "she", "they", "them", "his", "her", "their", "you", "your",
+  "to", "of", "in", "on", "at", "for", "with", "from", "by", "as", "about",
+  "have", "has", "had", "do", "does", "did", "not", "no", "so", "if", "then",
+  "there", "here", "up", "down", "out", "over", "some", "any", "very", "just",
+  "patient", "reports", "reported", "states", "stated", "describes", "described",
+]);
+
+const NUMERIC_WORD =
+  /^\d+$|^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)$/;
+
+/**
+ * True when a restatement is built from words the patient actually used.
+ *
+ * Not a paraphrase detector — a fabrication detector. A model that keeps the
+ * patient's vocabulary and rearranges it passes; one that introduces a duration,
+ * a body site or a drug name the patient never said does not.
+ *
+ * This closes the gap the verbatim check leaves open: a correctly quoted
+ * fragment does not make the restatement printed beside it true. The model
+ * could quote "a while" faithfully and still write "three months", and it is
+ * the restatement a physician reads.
+ */
+export function isGroundedRestatement(value: string, answer: string): boolean {
+  const words = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9%\s]/g, " ").split(/\s+/).filter(Boolean);
+
+  const haystack = new Set(words(answer));
+  const content = words(value).filter((w) => !FILLER_WORDS.has(w) && w.length > 1);
+  if (content.length === 0) return true;
+
+  // Numbers and units are where fabrication does the most damage, so any the
+  // patient did not use fails the whole restatement.
+  if (content.some((w) => NUMERIC_WORD.test(w) && !haystack.has(w))) return false;
+
+  const found = content.filter((w) => haystack.has(w)).length;
+  return found / content.length >= 0.6;
+}
+
 /** Validates a model turn payload. Anything unexpected is discarded, not coerced. */
 export function parseTurn(
   raw: unknown,
@@ -77,11 +119,20 @@ export function parseTurn(
     if (!allowedSlots.includes(slot)) continue;
     if (!value) continue;
     if (!(CERTAINTY as readonly string[]).includes(certainty)) continue;
+
     // Provenance rule: the quoted verbatim must genuinely appear in the answer.
     const grounded = verbatim.length > 0 && answer.toLowerCase().includes(verbatim.toLowerCase());
+
+    // The value is the model's restatement, and it is what a physician reads.
+    // A grounded quote does not make the restatement beside it true — the model
+    // could quote "a while" correctly and still write "three months". So the
+    // restatement has to be built from words the patient actually used; when it
+    // is not, their own words are used instead.
+    const safeValue = isGroundedRestatement(value, answer) ? tidy(value) : tidy(grounded ? verbatim : answer);
+
     facts.push({
       slot,
-      value: tidy(value).slice(0, 240),
+      value: safeValue.slice(0, 240),
       verbatim: grounded ? verbatim : answer.trim(),
       certainty: certainty as Fact["certainty"],
       source: "patient",
@@ -89,8 +140,14 @@ export function parseTurn(
     });
   }
 
+  // A patient question is shown to the physician as `Patient asked: "..."`.
+  // That is a quotation, so it has to be one — anything the model composed
+  // rather than lifted is discarded.
   const patientQuestions = Array.isArray(r.patient_questions)
-    ? r.patient_questions.filter((q): q is string => typeof q === "string" && q.trim().length > 2).map((q) => q.trim().slice(0, 200))
+    ? r.patient_questions
+        .filter((q): q is string => typeof q === "string" && q.trim().length > 2)
+        .map((q) => q.trim().slice(0, 200))
+        .filter((q) => isGroundedRestatement(q, answer))
     : [];
 
   const nq = typeof r.next_question === "string" ? r.next_question.trim() : "";

@@ -74,15 +74,34 @@ const FAMILY_STATEMENT =
 
 const ATOPY_TERMS = /\b(eczema|asthma|hay ?fever|atopic|allergies|psoriasis|skin (?:conditions?|problems?|issues?))\b/i;
 /**
- * A first-person present-tense belief about a diagnosis ("I know this is
- * melanoma") is the patient's opinion, not a history. It must not be filed
- * under "sun and skin-cancer history", where it would read as established.
+ * A belief, a fear, or a question about a diagnosis ("I know this is melanoma",
+ * "I'm worried this is skin cancer", "could this be a melanoma?") is the
+ * patient's opinion, not a history. It must not be filed under "sun and
+ * skin-cancer history", where it would read as established fact.
+ *
+ * Worry and question framings matter most: a patient with a changing mole
+ * overwhelmingly opens by voicing the fear, and filing that as history both
+ * pollutes an objective field and suppresses the melanoma-risk question a
+ * dermatologist needs answered.
  */
 const SELF_DIAGNOSIS =
-  /\bi\s+(?:know|think|believe|reckon|am sure|'m sure|was told|read|googled)\b|\b(?:looks like|it'?s definitely|pretty sure)\b/i;
+  /\bi\s+(?:know|think|believe|reckon|am sure|'m sure|was told|read|googled)\b|\b(?:looks like|it'?s definitely|pretty sure)\b|\b(?:worried|worry|worries|scared|afraid|frightened|terrified|anxious|concerned|nervous|paranoid)\b|\b(?:could|can|might|may|is|could'?nt) (?:this|it|that) be\b|\bwhat if\b|\bis (?:this|it|that) (?:a |an )?(?:melanoma|skin cancer|basal cell|squamous|cancer)\b/i;
 
-const SUN_TERMS =
-  /\b(sun ?burn(?:s|ed|t)?|tanning|sun ?bed|outdoors?|roof(?:ing|er)|sail|beach|melanoma|skin cancer|basal cell|squamous)\b/i;
+/** Sun exposure the patient reports about themselves — genuine risk history. */
+const SUN_EXPOSURE_TERMS =
+  /\b(sun ?burn(?:s|ed|t)?|tanning|sun ?bed|outdoors?|roof(?:ing|er)|sail|beach)\b/i;
+
+/** Cancer nouns count as HISTORY only when the sentence frames them as one. */
+const SKIN_CANCER_NOUN = /(melanoma|skin cancer|basal cell|squamous)/i;
+const CANCER_HISTORY_FRAMING =
+  /\b(had|has|have had|history of|diagnosed|removed|cut out|treated|biopsi(?:ed|es)|survivor|runs in|father|mother|dad|mum|mom|brother|sister|sibling|family|parents?|grand(?:mother|father|ma|pa)|aunt|uncle|cousin)\b/i;
+const SKIN_CANCER_HISTORY = new RegExp(
+  `${CANCER_HISTORY_FRAMING.source}[^.!?]{0,60}${SKIN_CANCER_NOUN.source}` +
+    `|${SKIN_CANCER_NOUN.source}[^.!?]{0,60}${CANCER_HISTORY_FRAMING.source}`,
+  "i",
+);
+
+const SUN_TERMS = new RegExp(`${SUN_EXPOSURE_TERMS.source}|${SKIN_CANCER_HISTORY.source}`, "i");
 /** Actual pattern language — the shape of hair loss, not where it is. */
 const HAIR_PATTERN_TERMS =
   /\b(overall thinning|thinning all over|all.over thinning|widening part|part (?:is|looks) wider|receding hairline|hairline (?:is )?receding|bald (?:patch|patches|spot|spots)|round patches|patchy (?:loss|hair loss)|diffuse (?:shedding|thinning|loss)|coming out in handfuls|thinning on top|temples? (?:are )?receding)\b/i;

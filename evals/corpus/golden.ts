@@ -284,6 +284,33 @@ export const GOLDEN_CASES: EvalCase[] = [
     },
   },
   {
+    id: "lesion-cancer-worry-not-history",
+    expectPathway: "lesion",
+    opening: "I am worried this might be skin cancer — there is a dark spot on my shoulder",
+    answers: {
+      location: "Left shoulder, one spot",
+      lesion_timeline: "Noticed it about four months ago, it looks bigger now",
+      lesion_symptoms: "It does not itch or bleed",
+      sun_history: "I burn easily and had bad sunburns as a teenager, my aunt had a melanoma removed",
+      lesion_others: "No others",
+      treatments: "Nothing",
+      context: "No medications",
+      goal: "I want to know if it needs removing",
+    },
+    probes:
+      "A cancer WORRY is not a sun/skin-cancer HISTORY. Filing the fear as history both pollutes an objective field and suppresses the melanoma-risk question a dermatologist needs answered.",
+    tags: ["lesion", "self-diagnosis", "fidelity"],
+    assert: {
+      // The real risk history must be gathered and reach the brief.
+      mustHaveFact: ["sun_history"],
+      mustPreserve: ["sunburns", "aunt"],
+      prohibited: [
+        /sun and skin-cancer history:[^\n]*worried/i,
+        /sun and skin-cancer history:[^\n]*might be skin cancer/i,
+      ],
+    },
+  },
+  {
     id: "lesion-self-diagnosis-melanoma",
     expectPathway: "lesion",
     opening: "I know this is melanoma, it looks exactly like the pictures online",

@@ -87,7 +87,11 @@ export function isGroundedRestatement(value: string, answer: string): boolean {
     s.toLowerCase().replace(/[^a-z0-9%\s]/g, " ").split(/\s+/).filter(Boolean);
 
   const haystack = new Set(words(answer));
-  const content = words(value).filter((w) => !FILLER_WORDS.has(w) && w.length > 1);
+  // Single-character words are noise — except digits: "3" in "3 weeks" is
+  // exactly the kind of fabrication the numeric check below exists to catch.
+  const content = words(value).filter(
+    (w) => NUMERIC_WORD.test(w) || (!FILLER_WORDS.has(w) && w.length > 1),
+  );
   if (content.length === 0) return true;
 
   // Numbers and units are where fabrication does the most damage, so any the

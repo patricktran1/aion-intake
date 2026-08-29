@@ -1,4 +1,5 @@
 import { bundleById, saveIntake } from "@/lib/store";
+import { withIntakeLock } from "@/lib/store/lock";
 import { fail, json } from "@/lib/api";
 import { MAX_REVIEW_FIELD, clinicianReviewSchema } from "@/lib/domain/types";
 import { track } from "@/lib/analytics";
@@ -12,8 +13,7 @@ type Params = { params: Promise<{ id: string }> };
  */
 export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
-  const bundle = bundleById(id);
-  if (!bundle) return fail("Intake not found.", 404);
+  if (!bundleById(id)) return fail("Intake not found.", 404);
 
   let body: unknown;
   try {
@@ -23,38 +23,56 @@ export async function PATCH(req: Request, { params }: Params) {
   }
   const b = (body ?? {}) as { hpi?: unknown; review?: unknown };
 
-  let intake = bundle.intake;
-  if (typeof b.hpi === "string") {
-    const hpi = b.hpi.slice(0, 20000);
-    const edited = hpi.trim() !== intake.hpiGenerated.trim();
-    if (edited && !intake.hpiEditedByClinician) {
-      track("clinician_hpi_edited", { intake_id: intake.id });
+  // Two clinicians (or two tabs) editing the same intake must not overwrite
+  // each other's HPI wholesale: each PATCH re-reads under the lock.
+  return withIntakeLock(id, async () => {
+    const bundle = bundleById(id);
+    if (!bundle) return fail("Intake not found.", 404);
+
+    let intake = bundle.intake;
+    if (typeof b.hpi === "string") {
+      const hpi = b.hpi.slice(0, 20000);
+      const edited = hpi.trim() !== intake.hpiGenerated.trim();
+      if (edited && !intake.hpiEditedByClinician) {
+        track("clinician_hpi_edited", { intake_id: intake.id });
+      }
+      intake = { ...intake, hpi, hpiEditedByClinician: edited };
     }
-    intake = { ...intake, hpi, hpiEditedByClinician: edited };
-  }
-  if (b.review && typeof b.review === "object") {
-    // Truncate before validating, so a physician who pastes a very long note
-    // gets it saved and trimmed rather than rejected mid-encounter.
-    const incoming = Object.fromEntries(
-      Object.entries(b.review as Record<string, unknown>).map(([k, v]) => [
-        k,
-        typeof v === "string" ? v.slice(0, MAX_REVIEW_FIELD) : v,
-      ]),
-    );
-    const parsed = clinicianReviewSchema.safeParse({ ...intake.review, ...incoming });
-    if (!parsed.success) return fail("Invalid review fields.", 400);
-    // "reviewed" is a state a submitted intake moves into — never a jump from
-    // not_started/in_progress, which would hide an unfinished intake from the
-    // patient while the clinician thinks it is done.
-    if (intake.status !== "ready_for_review" && intake.status !== "reviewed") {
-      return fail("This intake has not been submitted yet.", 409);
+    if (b.review && typeof b.review === "object") {
+      // Truncate before validating, so a physician who pastes a very long note
+      // gets it saved and trimmed rather than rejected mid-encounter.
+      const incoming = Object.fromEntries(
+        Object.entries(b.review as Record<string, unknown>).map(([k, v]) => [
+          k,
+          typeof v === "string" ? v.slice(0, MAX_REVIEW_FIELD) : v,
+        ]),
+      );
+      const parsed = clinicianReviewSchema.safeParse({
+        ...intake.review,
+        ...incoming,
+      });
+      if (!parsed.success) return fail("Invalid review fields.", 400);
+      // "reviewed" is a state a submitted intake moves into — never a jump from
+      // not_started/in_progress, which would hide an unfinished intake from the
+      // patient while the clinician thinks it is done.
+      if (
+        intake.status !== "ready_for_review" &&
+        intake.status !== "reviewed"
+      ) {
+        return fail("This intake has not been submitted yet.", 409);
+      }
+      intake = {
+        ...intake,
+        review: { ...parsed.data, updatedAt: new Date().toISOString() },
+        status: "reviewed",
+      };
     }
-    intake = {
-      ...intake,
-      review: { ...parsed.data, updatedAt: new Date().toISOString() },
-      status: "reviewed",
-    };
-  }
-  const saved = saveIntake(intake);
-  return json({ ok: true, hpi: saved.hpi, review: saved.review, status: saved.status });
+    const saved = saveIntake(intake);
+    return json({
+      ok: true,
+      hpi: saved.hpi,
+      review: saved.review,
+      status: saved.status,
+    });
+  });
 }

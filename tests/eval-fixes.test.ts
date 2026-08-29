@@ -107,3 +107,42 @@ describe("vague quantities read as approximate (eval: temporal-a-few-years)", ()
     expect(timeline?.certainty).toBe("approximate");
   });
 });
+
+describe("a cancer worry is not a sun/skin-cancer history", () => {
+  it.each([
+    "I am worried this might be skin cancer, dark spot on my shoulder",
+    "Could this be a melanoma? New mole on my leg",
+    "I'm scared this is a melanoma",
+    "What if it's skin cancer?",
+    "Is this melanoma?",
+  ])("does not harvest the fear into sun_history: %s", (opening) => {
+    expect(harvest(opening, ["sun_history"], AT)).toHaveLength(0);
+  });
+
+  it.each([
+    "Lots of sunburns as a kid and my father had melanoma",
+    "I had a basal cell removed from my nose two years ago",
+    "I burn easily and spent every summer at the beach",
+    "I used tanning beds all through college",
+    "My mother is a melanoma survivor",
+  ])("still harvests a real risk history: %s", (opening) => {
+    expect(harvest(opening, ["sun_history"], AT)).toHaveLength(1);
+  });
+
+  it("asks the sun-history question when the opener only voiced a fear", async () => {
+    const intake = await drive("I am worried this might be skin cancer, dark spot on my shoulder", {
+      location: "Left shoulder",
+      lesion_timeline: "About four months, looks bigger",
+      lesion_symptoms: "No itch or bleeding",
+      sun_history: "Bad sunburns as a teenager, my aunt had a melanoma removed",
+      lesion_others: "No",
+      treatments: "Nothing",
+      context: "No medications",
+      goal: "Want to know if it needs removing",
+    });
+    expect(intake.askedSlots).toContain("sun_history");
+    const sun = intake.facts.find((f) => f.slot === "sun_history");
+    expect(sun?.value.toLowerCase()).toContain("sunburns");
+    expect(sun?.value.toLowerCase()).not.toContain("worried");
+  });
+});

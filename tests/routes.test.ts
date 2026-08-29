@@ -7,6 +7,7 @@ import { PATCH as factsRoute } from "@/app/api/intake/[token]/facts/route";
 import { POST as photoRoute } from "@/app/api/intake/[token]/photos/route";
 import { PATCH as clinicianRoute } from "@/app/api/clinician/intakes/[id]/route";
 import { POST as noteRoute } from "@/app/api/clinician/intakes/[id]/note/route";
+import { jpegDataUrl } from "./fixtures/images";
 import { DEMO_TOKENS } from "@/lib/demo/seed";
 import { getIntakeByToken, listBundles, resetDb } from "@/lib/store";
 import { resetAnalytics } from "@/lib/analytics";
@@ -126,7 +127,7 @@ describe("patient intake API", () => {
 });
 
 describe("photo upload API", () => {
-  const jpeg = `data:image/jpeg;base64,${"A".repeat(4000)}`;
+  const jpeg = jpegDataUrl(1400, 1050);
 
   it("accepts a valid photo", async () => {
     const res = await photoRoute(

@@ -143,18 +143,34 @@ export function guardAll(text: string, sources: string[]): GuardViolation[] {
  * engine's own wording, which the patient cannot tell apart.
  */
 const UNSAFE_QUESTION_PATTERNS: RegExp[] = [
-  /\b(sounds like|looks like|that'?s likely|probably (is|just)|this (is|could be) (a|an))\b/i,
+  // Opinion about what the condition is — every phrasing shape.
+  /\b(sounds? like|looks? like|appears? (?:to be|like)|seems? (?:to be|like)|that'?s likely|probably (is|just)|this (is|could be|might be) (a|an)|could this be|consistent with)\b/i,
   /\b(diagnos|assessment|prescrib|treatment plan)/i,
+  // Advice, however phrased.
   /\byou should (try|use|apply|take|stop|see)\b/i,
   /\bi (recommend|suggest|would advise)\b/i,
-  /\b(don'?t worry|nothing to worry about|it'?s nothing serious|you'?ll be fine)\b/i,
+  // A treatment SUGGESTION dressed as a question. "Have you tried anything" is
+  // the engine's own legitimate question; "Have you tried hydrocortisone" is
+  // the model recommending a drug.
+  /\bhave you (tried|considered|thought about) (?!anything\b|something\b)/i,
+  /\b(?:would|could) (?:a|an|some)\b.{0,30}\b(cream|ointment|gel|wash|pill|antibiotic|steroid)\b/i,
+  // Reassurance, however phrased.
+  /\b(don'?t worry|nothing to worry about|it'?s nothing serious|you'?ll be fine|probably fine|not (?:too )?serious|harmless|no need to (?:worry|panic)|nothing to be concerned)\b/i,
   /\b(urgent|emergency|serious|dangerous|cancer|malignan|benign)\b/i,
   /\bin my (opinion|experience)\b/i,
 ];
 
-export function isSafeQuestion(text: string): boolean {
+/**
+ * @param sources The patient's own words so far. A diagnosis word the PATIENT
+ *   used may be echoed back ("you mentioned eczema as a child — does this feel
+ *   similar?"); one the model introduced is an opinion and is blocked.
+ */
+export function isSafeQuestion(text: string, sources: string[] = []): boolean {
   const t = text.trim();
   if (t.length < 8 || t.length > 320) return false;
   if (!t.includes("?")) return false;
-  return !UNSAFE_QUESTION_PATTERNS.some((re) => re.test(t));
+  if (UNSAFE_QUESTION_PATTERNS.some((re) => re.test(t))) return false;
+  // A named diagnosis the patient never said has no place in a question either.
+  if (guardDiagnosisTerms(t, sources).length > 0) return false;
+  return true;
 }

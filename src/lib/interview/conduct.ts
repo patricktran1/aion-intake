@@ -296,7 +296,8 @@ export async function conductTurn(args: {
         // not. A question that trips the guard silently reverts to the engine's
         // own wording.
         if (planned.slot && parsed.nextQuestion) {
-          if (isSafeQuestion(parsed.nextQuestion)) {
+          const sources = [...intake.facts, ...facts].flatMap((f) => [f.verbatim, f.value]);
+          if (isSafeQuestion(parsed.nextQuestion, [...sources, answer])) {
             questionText = parsed.nextQuestion;
           } else {
             track("ai_fallback", { purpose: "question_guard" });

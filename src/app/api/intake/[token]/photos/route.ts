@@ -2,7 +2,7 @@ import { bundleByToken, saveIntake } from "@/lib/store";
 import type { Photo } from "@/lib/domain/types";
 import { fail, json, patientView } from "@/lib/api";
 import { LIMITS, allow, intakeKey } from "@/lib/ratelimit";
-import { MAX_PHOTOS, checkPhoto, isAcceptedDataUrl } from "@/lib/photos";
+import { MAX_PHOTOS, MAX_UPLOAD_BYTES, checkPhoto, inspectDataUrl, isAcceptedDataUrl } from "@/lib/photos";
 import { track } from "@/lib/analytics";
 
 type Params = { params: Promise<{ token: string }> };
@@ -21,6 +21,14 @@ export async function POST(req: Request, { params }: Params) {
   }
   if (bundle.intake.status === "ready_for_review" || bundle.intake.status === "reviewed") {
     return fail("This intake has been submitted — photos can no longer be changed.", 409);
+  }
+
+  // Reject an obviously oversized request before buffering/parsing its body.
+  // Data-URL overhead is ~4/3, plus JSON envelope — anything past ~9MB cannot
+  // contain a photo we would accept.
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (declared > MAX_UPLOAD_BYTES * 1.5) {
+    return fail("That photo is too large to upload. Try taking it again at a normal size.", 413);
   }
 
   let body: unknown;
@@ -43,7 +51,30 @@ export async function POST(req: Request, { params }: Params) {
   }
   const bytes = Math.round((dataUrl.length * 3) / 4);
 
-  const check = checkPhoto({ mime, bytes, width, height, sharpness, existingCount: bundle.intake.photos.length });
+  // The client DECLARES mime/width/height; a hostile client can declare
+  // anything. Every gate below runs on what the actual bytes say instead.
+  const inspected = inspectDataUrl(dataUrl);
+  if (!inspected) {
+    track("intake_photo_rejected", { intake_id: bundle.intake.id, mime, bytes, reason: "not_an_image" });
+    return fail("That file didn't look like a photo. Please try again.", 400);
+  }
+  if (inspected.hasExif) {
+    // The product's privacy claim is that photo metadata (incl. GPS) is
+    // stripped before upload. The real client re-encodes through a canvas and
+    // never produces EXIF, so an EXIF-bearing JPEG is a bypass attempt — and
+    // accepting it would store location data we promised not to hold.
+    track("intake_photo_rejected", { intake_id: bundle.intake.id, mime, bytes, reason: "exif_present" });
+    return fail("That photo couldn't be added. Please retake it with your camera and try again.", 400);
+  }
+
+  const check = checkPhoto({
+    mime: inspected.mime,
+    bytes,
+    width: inspected.width,
+    height: inspected.height,
+    sharpness,
+    existingCount: bundle.intake.photos.length,
+  });
   if (!check.ok) {
     track("intake_photo_rejected", { intake_id: bundle.intake.id, mime, bytes });
     return fail(check.error ?? "That photo couldn't be added.", 400);
@@ -52,10 +83,10 @@ export async function POST(req: Request, { params }: Params) {
   const photo: Photo = {
     id: `pho_${Math.random().toString(36).slice(2, 12)}`,
     kind,
-    mime,
+    mime: inspected.mime,
     bytes,
-    width,
-    height,
+    width: inspected.width,
+    height: inspected.height,
     dataUrl,
     caption,
     advisories: check.advisories,

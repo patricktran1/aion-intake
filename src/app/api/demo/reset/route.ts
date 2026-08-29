@@ -14,6 +14,9 @@ export async function POST(req: Request) {
   if (!allow(clientKey(req, "reset"), LIMITS.demoReset)) {
     return fail("The demo was reset a moment ago. Try again shortly.", 429);
   }
+  if (!allow("reset:global", LIMITS.demoResetGlobal)) {
+    return fail("The demo was reset a moment ago. Try again shortly.", 429);
+  }
   resetAnalytics();
   const d = resetDb();
   track("demo_reset", { intakes: d.intakes.size });

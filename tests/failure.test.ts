@@ -10,6 +10,7 @@ import { PATCH as clinicianRoute } from "@/app/api/clinician/intakes/[id]/route"
 import { POST as noteRoute } from "@/app/api/clinician/intakes/[id]/note/route";
 import { POST as analyticsRoute } from "@/app/api/analytics/route";
 import { POST as resetRoute } from "@/app/api/demo/reset/route";
+import { jpegDataUrl } from "./fixtures/images";
 import { DEMO_TOKENS, blankIntake } from "@/lib/demo/seed";
 import { db, getIntakeByToken, listBundles, resetDb } from "@/lib/store";
 import { resetAnalytics, summarize } from "@/lib/analytics";
@@ -202,14 +203,14 @@ describe("the patient is never trapped", () => {
   });
 
   it("does not lose a photo when a later upload fails", async () => {
-    const jpeg = `data:image/jpeg;base64,${"A".repeat(4000)}`;
+    const jpeg = jpegDataUrl(1400, 1050);
     await photoRoute(post({ dataUrl: jpeg, width: 1400, height: 1050, mime: "image/jpeg" }), params(TOKEN));
     await photoRoute(post({ dataUrl: "garbage", width: 10, height: 10, mime: "x" }), params(TOKEN));
     expect(getIntakeByToken(TOKEN)!.photos).toHaveLength(1);
   });
 
   it("recovers cleanly when a photo is deleted twice", async () => {
-    const jpeg = `data:image/jpeg;base64,${"A".repeat(4000)}`;
+    const jpeg = jpegDataUrl(1400, 1050);
     await photoRoute(post({ dataUrl: jpeg, width: 1400, height: 1050, mime: "image/jpeg" }), params(TOKEN));
     const id = getIntakeByToken(TOKEN)!.photos[0].id;
     const del = () =>
@@ -346,7 +347,7 @@ describe("rate limiting", () => {
 });
 
 describe("photo uploads accept only raster images", () => {
-  const raster = `data:image/jpeg;base64,${"A".repeat(4000)}`;
+  const raster = jpegDataUrl(1400, 1050);
 
   it("accepts a JPEG from the browser", async () => {
     const res = await photoRoute(
@@ -379,5 +380,32 @@ describe("model errors are reduced to a fixed vocabulary", () => {
     expect(errorReason(new Error("socket hang up ECONNRESET"))).toBe("network");
     expect(errorReason(new Error("Request timed out"))).toBe("timeout");
     expect(errorReason(new Error("something unexpected"))).toBe("other");
+  });
+});
+
+describe("reset isolation", () => {
+  it("does not resurrect a stale intake saved after a reset", async () => {
+    const { saveIntake, listBundles: list } = await import("@/lib/store");
+    const stale = getIntakeByToken(TOKEN)!;
+    resetDb(); // demo reset happens while a request holding `stale` is in flight
+    const before = list().length;
+    saveIntake({ ...stale, id: "int_from_previous_life", status: "ready_for_review" });
+    expect(list().length).toBe(before);
+  });
+
+  it("caps resets globally even when the caller rotates X-Forwarded-For", async () => {
+    let limited = false;
+    for (let i = 0; i < 60; i += 1) {
+      const req = new Request("http://localhost/api/demo/reset", {
+        method: "POST",
+        headers: { "x-forwarded-for": `10.0.0.${i}` },
+      });
+      const res = await resetRoute(req);
+      if (res.status === 429) {
+        limited = true;
+        break;
+      }
+    }
+    expect(limited).toBe(true);
   });
 });

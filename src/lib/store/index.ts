@@ -49,6 +49,10 @@ export function getIntakeByToken(token: string): Intake | undefined {
 
 export function saveIntake(intake: Intake): Intake {
   const next = { ...intake, lastActivityAt: new Date().toISOString() };
+  // An in-flight request that started before a demo reset must not resurrect
+  // its stale intake into the fresh store — every intake id is minted by the
+  // seed, so an id the current store does not know belongs to a previous life.
+  if (!db().intakes.has(next.id)) return next;
   db().intakes.set(next.id, next);
   return next;
 }

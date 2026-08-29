@@ -45,6 +45,13 @@ export const LIMITS = {
    * and must never be told to wait.
    */
   demoReset: { burst: 10, refillPerSecond: 0.2 },
+  /**
+   * Global reset ceiling, keyed on a constant. The per-address key is
+   * bypassable by rotating X-Forwarded-For, so this bounds total resets per
+   * hour regardless of who asks — high enough for any real demo day, low
+   * enough that a script cannot churn the store.
+   */
+  demoResetGlobal: { burst: 30, refillPerSecond: 0.02 },
 } as const;
 
 /** @returns true when the request may proceed. */

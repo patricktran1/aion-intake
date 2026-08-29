@@ -59,14 +59,14 @@ export function Composer({
     <div className="border-t hairline bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
       <div className="mx-auto w-full max-w-xl px-4 pb-[max(env(safe-area-inset-bottom),1rem)] pt-3">
         {chips.length > 0 && (
-          <div className="mb-2.5 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+          <div className="mb-2.5 flex flex-wrap gap-2">
             {chips.map((c) => (
               <button
                 key={c}
                 type="button"
                 disabled={disabled}
                 onClick={() => submit(c, "text")}
-                className="shrink-0 rounded-full border border-line bg-paper px-3.5 py-1.5 text-sm text-ink-soft transition hover:border-accent hover:text-accent disabled:opacity-40"
+                className="rounded-full border border-line bg-paper px-3.5 py-1.5 text-sm text-ink-soft transition hover:border-accent hover:text-accent disabled:opacity-40"
               >
                 {c}
               </button>

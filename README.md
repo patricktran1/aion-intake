@@ -141,6 +141,9 @@ scripts/
 | `AI.md` | Where AI is used, the hallucination controls, the cost model |
 | `SECURITY.md` | What is true today, and what must be true before real PHI |
 | `THREAT_MODEL.md` | Who would attack this, what stops them, where nothing does |
+| `PRIVACY_MAP.md` | Where patient information can be, in each mode |
+| `SECURITY_REVIEW_PACKET.md` | For an independent reviewer: architecture, and where to attack |
+| `PILOT_SETUP.md` | Zero to a running pilot environment with synthetic data |
 | `EVALS.md` | The evaluation lab: how the interview is measured |
 | `GOLDEN_SET.md` | The 49 hand-reviewed cases and what each one protects |
 | `MODEL_EVAL.md` | Model vs deterministic, per stage — and what is still unmeasured |

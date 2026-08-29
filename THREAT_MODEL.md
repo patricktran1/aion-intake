@@ -130,6 +130,24 @@ dermatologist and front-desk staff. Against the insider adversary there is
 currently **no control at all**. This is the second-largest gap and is
 PILOT_READINESS.md §3 and §5.
 
+## What pilot mode changes
+
+The five weaknesses below were written against the demo, which is still what
+the public deployment runs. Pilot mode addresses four of them in code:
+
+| Weakness | In pilot mode |
+|---|---|
+| Link-holder equals patient | Tokens expire, can be revoked, are stored only as a peppered hash, and need a second factor (date of birth). Five wrong answers kill the link. **Partly closed** — a date of birth is a weak factor, and it remains the largest gap. |
+| No audit trail | Append-only audit events for every action, carrying no clinical content. **Closed.** |
+| No durable storage | Postgres with encryption at rest, transaction-safe deletion, configurable retention. **Closed.** |
+| In-process controls weaken at two instances | Write serialisation moves to database row locks. Rate limiting does **not** — it is still per-instance and is the remaining item. |
+| The model provider sees prompt content | Unchanged, and still contractual. `AION_MODEL_MODE=off` guarantees nothing is transmitted, and that guarantee is tested by stubbing the network. |
+
+Two new surfaces come with pilot mode and are attacked in
+`tests/pilot-isolation.test.ts`: clinician accounts, and the practice
+boundary between two tenants. See SECURITY_REVIEW_PACKET.md for where those
+are weakest.
+
 ## Where this model is weakest
 
 Stated plainly, because a threat model that only lists wins is marketing:

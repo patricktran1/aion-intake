@@ -1,5 +1,25 @@
 # Security and privacy
 
+## Two modes
+
+Since the pilot foundation landed, this repository is two products.
+
+**Demo mode** (`AION_RUNTIME_MODE=demo`, the default, and what the public
+deployment runs) is everything described below: synthetic data in process
+memory, a shared passphrase on the clinician view, no durable storage.
+
+**Pilot mode** (`AION_RUNTIME_MODE=pilot`) replaces the parts this document
+calls out as missing: durable encrypted Postgres, per-clinician accounts with
+sessions, practice isolation, visit-bound patient links with expiry,
+revocation and a second factor, private object storage for photographs, an
+audit trail, and configurable retention with real deletion. PILOT_SETUP.md
+sets one up; SECURITY_REVIEW_PACKET.md is the reviewer's map; PRIVACY_MAP.md
+shows where information lives in each mode.
+
+Pilot mode does not make the system lawful to use. PILOT_READINESS.md still
+governs that, and every gate in it that needs a contract or a policy decision
+is still open.
+
 ## Status
 
 **This build holds synthetic data only. It is not HIPAA compliant and does not

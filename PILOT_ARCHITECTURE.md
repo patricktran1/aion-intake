@@ -32,49 +32,69 @@ have.
 
 ## What changes from the demo
 
-Four things, in dependency order.
+Four things, in dependency order. **All four are now built** — this section
+describes what was done and what is left, rather than a plan. PILOT_SETUP.md
+is the operational guide.
 
-### 1. The store becomes Postgres
+### 1. The store becomes Postgres — BUILT
 
-`src/lib/store/index.ts` is eight functions and nothing else in the codebase
-touches persistence. That boundary is the whole migration plan: implement the
-eight against Postgres, delete the map.
+`src/lib/store/types.ts` is the interface; `memory.ts` and `sql.ts` are the two
+adapters. Nothing above the store knows which one is running.
 
-Two properties the current implementation gets for free that the real one must
-buy explicitly:
+The two properties the in-memory version got for free are now bought
+explicitly:
 
-- **Atomic read-modify-write.** Every write route reads an intake, awaits, and
-  saves. In-process this is made safe by `src/lib/store/lock.ts`, a per-intake
-  promise chain. That construct does not survive a second instance. With
-  Postgres, the equivalent is a row-level transaction (`SELECT … FOR UPDATE`)
-  or an optimistic `version` column with a retry — pick one, and delete the
-  lock file when you do rather than leaving two mechanisms that disagree.
-- **No cross-request leakage.** Verified today by `tests/concurrency.test.ts`,
-  which interleaves two patients turn-for-turn and asserts neither record
-  contains the other's words. Port that test against the real store; it is the
-  single most important test in the suite.
+- **Atomic read-modify-write.** `withIntake()` opens a transaction and takes
+  `SELECT … FOR UPDATE` on the intake row, so two requests for the same intake
+  serialise in the database and a second web instance changes nothing. An
+  optimistic `version` column backs it up: any future path that skips the lock
+  fails loudly rather than overwriting silently. The demo's promise chain
+  (`store/lock.ts`) is still used by the memory adapter and only by it — the
+  two mechanisms cannot disagree because they are never both in play.
+- **No cross-request leakage.** `tests/pilot-isolation.test.ts` attacks the
+  practice boundary directly, and `tests/pilot-durability.test.ts` runs five
+  concurrent writes to one intake and asserts all five land. Both run against
+  real Postgres (PGlite — Postgres compiled to WebAssembly), so the locking
+  semantics are the genuine ones rather than a fake that would agree with
+  whatever the code does.
 
-### 2. Photos move to object storage
+### 2. Photos move to object storage — BUILT
 
-Photos are data URLs inside the intake row today. At 1.5 MB per intake that is
-tolerable for a pilot database but wrong in kind: it makes every read of an
-intake drag megabytes, and it puts image bytes in backups that have different
-retention needs from text.
+Demo photos are data URLs inside the record; pilot photos are not. The row
+holds a key, the bytes live in object storage, and the two adapters are a
+local filesystem (development, or a single instance on an encrypted volume)
+and anything S3-compatible.
 
-Object storage with server-side encryption, short-lived signed URLs, and the
-intake row holding only keys. Server-side EXIF rejection already exists
-(`src/lib/photos.ts` inspects the actual bytes; an EXIF-bearing JPEG is
-refused), so the privacy property does not depend on the browser.
+**No signed URLs**, which is a change from what this document originally
+planned. A pre-signed URL is a bearer token for a photograph of someone's
+skin — forwardable, cacheable and unrevokable — which is precisely the
+property the patient-token work removed. Instead the server checks who is
+asking and streams the bytes itself, and every read is audited. The cost is a
+few hundred kilobytes through the application per brief, which at three
+intakes an hour is nothing.
 
-### 3. Identity replaces the token and the passphrase
+Keys carry 128 bits of randomness under a `practice/intake/` prefix, so
+knowing an intake id does not let you construct one and a lifecycle rule can
+target a single practice. Server-side EXIF rejection is unchanged
+(`src/lib/photos.ts` inspects the actual bytes), so the privacy property does
+not depend on the browser.
 
-The intake token is 128 CSPRNG bits and is currently the entire patient
-identity; the clinician side is one shared passphrase in middleware. Both are
-demo constructs. PILOT_READINESS.md §3 and §4 own this; architecturally the
-requirement is that neither the store nor the interview engine knows anything
-about auth, and that stays true.
+### 3. Identity replaces the token and the passphrase — BUILT
 
-### 4. Rate limiting becomes shared
+Clinicians get accounts, scrypt-hashed passwords and signed sessions carrying
+their practice; the account is re-read on every request so disabling one takes
+effect immediately. Patient links are 256 bits, stored only as a peppered
+hash, expiring, revocable, and gated on a second factor the link does not
+contain.
+
+The architectural requirement held: neither the store nor the interview engine
+knows anything about authentication. `requireClinician()` in
+`src/lib/auth/guard.ts` is the single seam an OIDC provider replaces.
+
+What is NOT built: MFA, session revocation short of disabling the account, and
+an identity-provider integration. See SECURITY_REVIEW_PACKET.md.
+
+### 4. Rate limiting becomes shared — NOT YET BUILT
 
 `src/lib/ratelimit.ts` is an in-process token bucket keyed per intake token —
 deliberately not per IP, because a waiting room is one NAT and per-IP limits

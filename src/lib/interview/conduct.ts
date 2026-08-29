@@ -1,7 +1,7 @@
 import type { Fact, Intake, IntakeBundle } from "@/lib/domain/types";
 import { CERTAINTY } from "@/lib/domain/types";
 import { track } from "@/lib/analytics";
-import { callText, callTool, isModelEnabled, modelName } from "@/lib/ai/client";
+import { callText, callTool, isStageEnabled, modelName } from "@/lib/ai/client";
 import { round6 } from "@/lib/ai/cost";
 import {
   SYSTEM_HPI,
@@ -276,7 +276,7 @@ export async function conductTurn(args: {
   let questionText: string | null = questionFor(planned.slot, intake.facts);
 
   if (!empty) {
-    if (isModelEnabled()) {
+    if (isStageEnabled("turn")) {
       const res = await callTool<RawTurn>({
         system: SYSTEM_INTERVIEWER,
         user: turnUserPrompt({
@@ -299,7 +299,7 @@ export async function conductTurn(args: {
         // Re-voicing is allowed; advising, reassuring, or naming a diagnosis is
         // not. A question that trips the guard silently reverts to the engine's
         // own wording.
-        if (planned.slot && parsed.nextQuestion) {
+        if (planned.slot && parsed.nextQuestion && isStageEnabled("question")) {
           const sources = [...intake.facts, ...facts].flatMap((f) => [f.verbatim, f.value]);
           if (isSafeQuestion(parsed.nextQuestion, [...sources, answer])) {
             questionText = parsed.nextQuestion;
@@ -481,7 +481,7 @@ export async function generateHpi(bundle: IntakeBundle): Promise<{ intake: Intak
   let intake = bundle.intake;
   const deterministic = composeHpiDeterministic(bundle);
 
-  if (!isModelEnabled() || intake.facts.length === 0) {
+  if (!isStageEnabled("hpi") || intake.facts.length === 0) {
     intake = { ...intake, hpi: deterministic, hpiGenerated: deterministic };
     return { intake, usedModel: false };
   }

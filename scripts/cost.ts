@@ -138,11 +138,21 @@ async function main() {
     console.log(`  ${name.padEnd(28)} ${usd(c)}`);
   }
 
-  console.log("\nMonthly AI spend at volume (default model, mean intake):");
-  for (const v of [100, 1_000, 10_000, 100_000]) {
-    console.log(`  ${String(v).padStart(7)} intakes/month   ${usd(meanCost * v).padStart(10)}`);
+  console.log("\nMonthly AI spend at volume (default model):");
+  console.log(`  ${"intakes/month".padStart(9)}   ${"at mean".padStart(11)}   ${"at p90".padStart(11)}`);
+  for (const v of [100, 1_000, 10_000, 100_000, 1_000_000]) {
+    const label = v >= 1_000_000 ? `${v / 1_000_000}M` : v >= 1_000 ? `${v / 1_000}k` : String(v);
+    console.log(
+      `  ${label.padStart(9)}   ${usd(meanCost * v).padStart(11)}   ${usd(p90 * v).padStart(11)}`,
+    );
   }
   console.log(`\n  deterministic mode (no API key)   ${usd(0)} at any volume`);
+
+  // A pilot is the only volume anyone is committing to right now, so price it
+  // explicitly rather than making a reader interpolate between the rows above.
+  console.log("\nPilot envelope (5-20 dermatologists, 100-2,000 intakes/month):");
+  console.log(`  floor    100 intakes/month   ${usd(meanCost * 100)}/mo`);
+  console.log(`  ceiling  2,000 intakes/month ${usd(meanCost * 2_000)}/mo   (p90 ${usd(p90 * 2_000)}/mo)`);
 }
 
 void main();

@@ -37,8 +37,9 @@ export async function POST(req: Request, { params }: Params) {
   }
   const b = (body ?? {}) as Record<string, unknown>;
   const dataUrl = typeof b.dataUrl === "string" ? b.dataUrl : "";
-  const width = Number(b.width) || 0;
-  const height = Number(b.height) || 0;
+  // The client's declared mime is kept only to record WHAT was rejected when a
+  // photo fails inspection; every gate below runs on the actual bytes, and the
+  // declared width/height are ignored entirely.
   const mime = typeof b.mime === "string" ? b.mime : "";
   const kind = b.kind === "wide" || b.kind === "close" ? b.kind : "unspecified";
   const caption = typeof b.caption === "string" ? b.caption.slice(0, 120) : "";

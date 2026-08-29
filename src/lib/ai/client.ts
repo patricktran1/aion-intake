@@ -25,8 +25,48 @@ export function modelName(): string {
   return process.env.AION_MODEL || DEFAULT_MODEL;
 }
 
+/**
+ * Ablation switch for the evaluation lab.
+ *
+ * The product ships as "full": the model extracts facts and re-voices the next
+ * question, and writes the HPI draft. To measure what the model is actually
+ * worth, each stage has to be switchable off independently — otherwise
+ * "the model helps" is an assertion, not a measurement.
+ *
+ *   off        every stage deterministic (identical to running with no key)
+ *   facts      model extracts facts; the ENGINE phrases the question; det. HPI
+ *   turn       model extracts and phrases; deterministic HPI
+ *   hpi        deterministic turns; model writes the HPI draft
+ *   full       everything (default, and what ships)
+ *
+ * Set AION_MODEL_MODE to one of these. Anything unrecognised means "full", so
+ * a typo degrades to shipping behaviour rather than silently disabling safety
+ * paths in production.
+ */
+export type ModelMode = "off" | "facts" | "turn" | "hpi" | "full";
+export type ModelStage = "turn" | "question" | "hpi";
+
+const MODE_STAGES: Record<ModelMode, ModelStage[]> = {
+  off: [],
+  facts: ["turn"],
+  turn: ["turn", "question"],
+  hpi: ["hpi"],
+  full: ["turn", "question", "hpi"],
+};
+
+export function modelMode(): ModelMode {
+  const raw = (process.env.AION_MODEL_MODE ?? "full").toLowerCase();
+  return raw in MODE_STAGES ? (raw as ModelMode) : "full";
+}
+
 export function isModelEnabled(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(process.env.ANTHROPIC_API_KEY) && modelMode() !== "off";
+}
+
+/** True when the key is present AND this stage is enabled in the current mode. */
+export function isStageEnabled(stage: ModelStage): boolean {
+  if (!process.env.ANTHROPIC_API_KEY) return false;
+  return MODE_STAGES[modelMode()].includes(stage);
 }
 
 function getClient(): Anthropic {

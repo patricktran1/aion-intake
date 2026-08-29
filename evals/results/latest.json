@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-08-29T20:17:55.811Z",
-  "corpusSize": 286,
-  "casesPassed": 286,
+  "generatedAt": "2026-08-29T22:49:04.864Z",
+  "corpusSize": 289,
+  "casesPassed": 289,
   "casesFailed": 0,
   "failing": [],
   "dimensions": [
@@ -9,7 +9,7 @@
       "dimension": "pathway_routing_accuracy",
       "score": 1,
       "unit": "fraction correct",
-      "detail": "239/239 routed to the expected pathway",
+      "detail": "242/242 routed to the expected pathway",
       "offenders": []
     },
     {
@@ -30,58 +30,58 @@
     },
     {
       "dimension": "mean_questions",
-      "score": 6.93,
+      "score": 6.94,
       "unit": "questions (budget 9)",
-      "detail": "mean questions asked across 286 completed intakes",
+      "detail": "mean questions asked across 289 completed intakes",
       "offenders": []
     },
     {
       "dimension": "redundant_question_rate",
       "score": 0,
       "unit": "fraction of post-opener questions",
-      "detail": "0/1695 questions re-asked a slot the opener already settled (lower is better)",
+      "detail": "0/1716 questions re-asked a slot the opener already settled (lower is better)",
       "offenders": []
     },
     {
       "dimension": "hpi_guard_clean_rate",
       "score": 1,
       "unit": "fraction with zero guard violations",
-      "detail": "286/286 HPIs contain no invented claims",
+      "detail": "289/289 HPIs contain no invented claims",
       "offenders": []
     },
     {
       "dimension": "unsupported_numeric_claim_rate",
       "score": 0,
       "unit": "fraction (MUST be 0)",
-      "detail": "0/286 HPIs contain a date or measurement the patient never gave",
+      "detail": "0/289 HPIs contain a date or measurement the patient never gave",
       "offenders": []
     },
     {
       "dimension": "completion_robustness",
       "score": 1,
       "unit": "fraction that never crashed (MUST be 1.0)",
-      "detail": "286/286 cases completed without throwing",
+      "detail": "289/289 cases completed without throwing",
       "offenders": []
     },
     {
       "dimension": "clarify_cap_adherence",
       "score": 1,
       "unit": "fraction within the cap (MUST be 1.0)",
-      "detail": "286/286 clarify lists stayed short enough to read",
+      "detail": "289/289 clarify lists stayed short enough to read",
       "offenders": []
     },
     {
       "dimension": "case_pass_rate",
       "score": 1,
       "unit": "fraction passing all assertions",
-      "detail": "286/286 cases passed every semantic assertion",
+      "detail": "289/289 cases passed every semantic assertion",
       "offenders": []
     }
   ],
   "metrics": {
     "pathway_routing_accuracy": 1,
     "routing_robustness_typos": 0.8,
-    "mean_questions": 6.93,
+    "mean_questions": 6.94,
     "redundant_question_rate": 0,
     "hpi_guard_clean_rate": 1,
     "unsupported_numeric_claim_rate": 0,

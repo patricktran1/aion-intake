@@ -140,9 +140,15 @@ scripts/
 | `SCOPE.md` | What this deliberately refuses to build |
 | `AI.md` | Where AI is used, the hallucination controls, the cost model |
 | `SECURITY.md` | What is true today, and what must be true before real PHI |
+| `THREAT_MODEL.md` | Who would attack this, what stops them, where nothing does |
+| `EVALS.md` | The evaluation lab: how the interview is measured |
+| `GOLDEN_SET.md` | The 49 hand-reviewed cases and what each one protects |
+| `MODEL_EVAL.md` | Model vs deterministic, per stage — and what is still unmeasured |
 | `METRICS.md` | The four numbers that decide whether the wedge is real |
 | `DEMO.md` | How to run the two-minute and five-minute demos |
 | `PILOT_READINESS.md` | What must be true before a single real patient |
+| `PILOT_ARCHITECTURE.md` | Running it for 5-20 dermatologists, 100-2,000 intakes/month |
+| `CONTRIBUTING.md` | For whoever picks this up next |
 | `DEFERRED.md` | Good ideas deliberately not built, and why |
 
 ## Safety boundaries

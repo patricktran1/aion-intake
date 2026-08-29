@@ -1,0 +1,133 @@
+import Link from "next/link";
+import { Brand } from "@/components/Brand";
+import { listBundles } from "@/lib/store";
+import { listRow } from "@/lib/api";
+import { PATHWAY_LABELS } from "@/lib/domain/types";
+
+export const dynamic = "force-dynamic";
+
+const STATUS_LABEL: Record<string, string> = {
+  ready_for_review: "Ready",
+  in_progress: "In progress",
+  not_started: "Not started",
+  reviewed: "Reviewed",
+};
+
+/**
+ * The clinician's list. Five columns, no chrome, no widgets.
+ *
+ * This screen exists only to get the dermatologist into the brief. Anything
+ * that would make it feel like an EHR homepage has been deliberately left out.
+ */
+export default function ClinicianList() {
+  const rows = listBundles().map(listRow);
+  const ready = rows.filter((r) => r.status === "ready_for_review");
+
+  return (
+    <main className="min-h-dvh-safe">
+      <header className="border-b hairline bg-surface">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <div className="flex items-baseline gap-4">
+            <Link href="/">
+              <Brand size="sm" />
+            </Link>
+            <span className="text-sm text-muted">Lakeview Dermatology · Dr. A. Sandoval</span>
+          </div>
+          <span className="text-xs text-muted">Synthetic demo data</span>
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-6xl px-6 py-10">
+        <h1 className="font-serif text-3xl tracking-[-0.02em] text-ink">Upcoming visits</h1>
+        <p className="mt-2 text-[15px] text-ink-soft">
+          {ready.length > 0
+            ? `${ready.length} pre-visit brief${ready.length > 1 ? "s" : ""} ready to read.`
+            : "No completed intakes waiting."}
+        </p>
+
+        <div className="mt-7 overflow-hidden rounded-xl border border-line bg-surface">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="border-b hairline bg-paper text-[11px] uppercase tracking-[0.1em] text-muted">
+                <th scope="col" className="px-5 py-3 font-medium">Patient</th>
+                <th scope="col" className="hidden px-5 py-3 font-medium sm:table-cell">Visit</th>
+                <th scope="col" className="px-5 py-3 font-medium">Concern</th>
+                <th scope="col" className="hidden px-5 py-3 font-medium md:table-cell">Intake</th>
+                <th scope="col" className="px-5 py-3 text-right font-medium">
+                  <span className="sr-only">Open</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-line)]">
+              {rows.map((r) => {
+                const submitted = r.status === "ready_for_review" || r.status === "reviewed";
+                return (
+                  <tr key={r.id} className="align-top transition hover:bg-paper">
+                    <td className="px-5 py-4">
+                      <div className="font-medium text-ink">{r.patientName}</div>
+                      <div className="text-[13px] text-muted">DOB {r.dateOfBirth}</div>
+                    </td>
+                    <td className="hidden px-5 py-4 text-[14px] text-ink-soft sm:table-cell">
+                      {new Date(r.scheduledFor).toLocaleDateString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                      <div className="text-[13px] text-muted">{r.reasonBooked}</div>
+                    </td>
+                    <td className="max-w-[26rem] px-5 py-4">
+                      {submitted ? (
+                        <>
+                          <div className="text-[15px] leading-snug text-ink">{r.concern}</div>
+                          <div className="mt-1 flex flex-wrap gap-2 text-[12px] text-muted">
+                            <span>{PATHWAY_LABELS[r.pathway]}</span>
+                            {r.photoCount > 0 && <span>· {r.photoCount} photo{r.photoCount > 1 ? "s" : ""}</span>}
+                            {r.openQuestionCount > 0 && (
+                              <span className="text-flag">· {r.openQuestionCount} to clarify</span>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-[15px] text-muted">Not completed yet</span>
+                      )}
+                    </td>
+                    <td className="hidden px-5 py-4 md:table-cell">
+                      <span
+                        className={`inline-block rounded-full px-2.5 py-1 text-[12px] ${
+                          r.status === "ready_for_review"
+                            ? "bg-accent-soft text-accent"
+                            : r.status === "reviewed"
+                              ? "bg-paper text-muted"
+                              : "bg-paper text-muted"
+                        }`}
+                      >
+                        {STATUS_LABEL[r.status]}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-right">
+                      {submitted ? (
+                        <Link
+                          href={`/clinician/${r.id}`}
+                          className="inline-block rounded-lg border border-line-strong px-3.5 py-1.5 text-[14px] font-medium text-ink transition hover:border-accent hover:text-accent"
+                        >
+                          Review
+                        </Link>
+                      ) : (
+                        <Link
+                          href={`/intake/${r.token}`}
+                          className="inline-block text-[14px] text-muted underline underline-offset-2 hover:text-ink"
+                        >
+                          Open link
+                        </Link>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  );
+}

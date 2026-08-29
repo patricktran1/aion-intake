@@ -78,9 +78,8 @@ export function PhotoStep({
         Want to add a photo or two?
       </h2>
       <p className="mt-3 text-[16px] leading-relaxed text-ink-soft">
-        Optional, and entirely up to you. If you add photos, {clinicianName} will have them
-        open while you talk — helpful when something looks different on the day of the visit
-        than it does today.
+        Entirely up to you. If you add photos, {clinicianName} will have them open while you
+        talk — useful when skin looks different on the day than it does right now.
       </p>
 
       <ul className="mt-5 space-y-1.5">
@@ -107,11 +106,13 @@ export function PhotoStep({
               type="button"
               onClick={() => remove(p.id)}
               aria-label="Remove this photo"
-              className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-ink/75 text-white transition hover:bg-ink"
+              className="group absolute right-1 top-1 flex h-11 w-11 items-center justify-center rounded-full text-white"
             >
-              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" stroke="currentColor" strokeWidth="1.8" fill="none">
-                <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
-              </svg>
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink/75 transition group-hover:bg-ink">
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" stroke="currentColor" strokeWidth="1.8" fill="none">
+                  <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                </svg>
+              </span>
             </button>
           </figure>
         ))}
@@ -138,6 +139,7 @@ export function PhotoStep({
         accept="image/*"
         capture="environment"
         multiple
+        aria-label="Choose a photo to add"
         className="sr-only"
         onChange={(e) => handleFiles(e.target.files)}
       />
@@ -154,8 +156,7 @@ export function PhotoStep({
       )}
 
       <p className="mt-5 text-[13px] leading-relaxed text-muted">
-        Nothing analyses these photos. They are reference material for your dermatologist to
-        look at with you.
+        These are just for {clinicianName} to look at with you. Nothing analyses them.
       </p>
 
       <button

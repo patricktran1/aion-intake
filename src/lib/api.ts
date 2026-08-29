@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Intake, IntakeBundle } from "@/lib/domain/types";
 import { buildBrief, headline } from "@/lib/ai/compose";
-import { findSlot } from "@/lib/interview/engine";
+import { estimateRemaining, findSlot } from "@/lib/interview/engine";
 
 export const json = <T>(data: T, status = 200) => NextResponse.json(data, { status });
 export const fail = (message: string, status = 400) =>
@@ -19,6 +19,8 @@ export function patientView(bundle: IntakeBundle) {
     status: intake.status,
     pathway: intake.pathway,
     questionCount: intake.questionCount,
+    /** Best current guess at what is left. Shrinks as the patient volunteers more. */
+    remaining: estimateRemaining(intake),
     urgentFlag: intake.urgentFlag,
     messages: intake.messages.map((m) => ({
       id: m.id,

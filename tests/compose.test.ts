@@ -205,3 +205,30 @@ describe("age", () => {
     expect(ageFrom("not-a-date")).toBeNull();
   });
 });
+
+describe("a patient who repeats themselves", () => {
+  const repeated = (text: string) => {
+    const b = bundleFor("pat_maya");
+    const facts = b.intake.facts.map((f) => ({ ...f, value: text, verbatim: text }));
+    return { ...b, intake: { ...b.intake, facts } };
+  };
+
+  it("does not produce eight identical brief rows", () => {
+    const sections = buildBrief(repeated("It is an itchy rash on both of my arms").intake);
+    const texts = sections.flatMap((s) => s.items.map((i) => i.text));
+    expect(texts).toHaveLength(1);
+  });
+
+  it("does not produce eight identical HPI lines", () => {
+    const hpi = composeHpiDeterministic(repeated("It is an itchy rash on both of my arms"));
+    const occurrences = hpi.split("itchy rash on both of my arms").length - 1;
+    expect(occurrences).toBeLessThanOrEqual(2);
+  });
+
+  it("still keeps short distinct answers that happen to match", () => {
+    const b = bundleFor("pat_maya");
+    const facts = b.intake.facts.map((f) => ({ ...f, value: "No", verbatim: "No" }));
+    const sections = buildBrief({ ...b.intake, facts });
+    expect(sections.flatMap((s) => s.items).length).toBeGreaterThan(1);
+  });
+});

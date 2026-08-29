@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Brand } from "@/components/Brand";
@@ -49,11 +49,31 @@ function report(event: string, intakeId: string) {
   }).catch(() => {});
 }
 
+/**
+ * Grows a textarea to fit its content.
+ *
+ * The draft HPI is the thing a physician is judging. Making them scroll inside
+ * a box to read it is friction on exactly the wrong action, and it hides how
+ * long the note actually is.
+ */
+function useAutoSize(value: string) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [value]);
+  return ref;
+}
+
 export function BriefView({ data }: { data: BriefData }) {
   const [hpi, setHpi] = useState(data.hpi);
   const [review, setReview] = useState<ClinicianReview>(data.review);
   const [note, setNote] = useState(data.note);
   const [showWords, setShowWords] = useState(false);
+  const hpiRef = useAutoSize(hpi);
+  const noteRef = useAutoSize(note);
   const [saving, setSaving] = useState<null | "hpi" | "review" | "note">(null);
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -138,7 +158,7 @@ export function BriefView({ data }: { data: BriefData }) {
           <button
             type="button"
             onClick={() => setShowWords((s) => !s)}
-            className="text-accent underline underline-offset-2 no-print"
+            className="-my-1 rounded px-1 py-2 text-accent underline underline-offset-2 no-print"
           >
             {showWords ? "Hide patient's own words" : "Show patient's own words"}
           </button>
@@ -248,12 +268,13 @@ export function BriefView({ data }: { data: BriefData }) {
                 </span>
               </div>
               <textarea
+                ref={hpiRef}
                 value={hpi}
                 onChange={(e) => setHpi(e.target.value)}
                 onBlur={() => patch({ hpi }, "hpi")}
-                rows={14}
+                rows={10}
                 aria-label="Draft history of present illness"
-                className="w-full resize-y bg-surface px-5 py-4 font-mono text-[13.5px] leading-relaxed text-ink outline-none focus:bg-paper"
+                className="w-full resize-y overflow-hidden bg-surface px-5 py-4 font-mono text-[13.5px] leading-relaxed text-ink outline-none focus:bg-paper"
               />
               <div className="flex items-center justify-between gap-3 border-t hairline px-5 py-3">
                 <p className="text-[12px] text-muted">
@@ -343,11 +364,12 @@ export function BriefView({ data }: { data: BriefData }) {
                   />
                 </div>
                 <textarea
+                  ref={noteRef}
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  rows={22}
+                  rows={18}
                   aria-label="Draft clinical note"
-                  className="w-full resize-y bg-surface px-5 py-4 font-mono text-[13px] leading-relaxed text-ink outline-none focus:bg-paper"
+                  className="w-full resize-y overflow-hidden bg-surface px-5 py-4 font-mono text-[13px] leading-relaxed text-ink outline-none focus:bg-paper"
                 />
               </div>
             ) : (

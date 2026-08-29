@@ -20,6 +20,12 @@ import { DEFAULT_MODEL } from "@/lib/ai/cost";
  * reach the physician attached to the right story.
  */
 
+/** Stable links printed on the home page so the demo is walkable in one click. */
+export const DEMO_TOKENS = {
+  acne: "demoacne0000acne0000demo0000",
+  open: "demoopen0000open0000demo0000",
+};
+
 let counter = 0;
 export const id = (prefix: string): string => {
   counter += 1;
@@ -390,8 +396,8 @@ export function seedData(): Db {
   );
 
   // --- Two open intake links so the founder can walk the patient flow -------
-  const daniel = blankIntake("vis_daniel", "demoacne0000acne0000demo0000");
-  const lena = blankIntake("vis_lena", "demoopen0000open0000demo0000");
+  const daniel = blankIntake("vis_daniel", DEMO_TOKENS.acne);
+  const lena = blankIntake("vis_lena", DEMO_TOKENS.open);
 
   const d: Db = {
     practices: new Map([[practice.id, practice]]),
@@ -403,8 +409,37 @@ export function seedData(): Db {
   return d;
 }
 
-/** Stable links printed on the home page so the demo is walkable in one click. */
-export const DEMO_TOKENS = {
-  acne: "demoacne0000acne0000demo0000",
-  open: "demoopen0000open0000demo0000",
-};
+/**
+ * The conference case.
+ *
+ * One patient, chosen so that a dermatologist watching over a shoulder sees the
+ * whole argument in ninety seconds: a complaint that routes to a specific
+ * pathway, questions that visibly adapt to the answers, one genuine uncertainty
+ * that survives into "clarify in visit", and a brief that is obviously faster to
+ * read than taking the history would be.
+ *
+ * The founder reads the answers out. Nothing else needs saying.
+ */
+export const CONFERENCE_CASE = {
+  token: DEMO_TOKENS.acne,
+  patient: "Daniel Whitaker",
+  why: "Acne with early scarring — shows the acne pathway, a treatment history with different responses, and a goal with a deadline.",
+  answers: [
+    "I keep breaking out along my jaw and chin and now it's starting to leave scars",
+    "Jawline and chin mostly, and some on my chest. The marks take months to fade and a couple have left dents",
+    "About two years, and definitely worse in the last six months",
+    "A benzoyl peroxide wash from the drugstore, and a clindamycin gel my GP gave me. The wash just dried me out. The gel helped for the first month and then stopped",
+    "It's worse when I'm stressed, and I've noticed it flares after football",
+    "It's the scarring that bothers me most. I've started turning down photos",
+    "No regular medications. No allergies I know of",
+    "I want to stop the scarring, and to know whether I should be on something stronger",
+  ],
+  /** What the founder should point at once the brief opens. */
+  talkingPoints: [
+    "Six questions, not forty — and the questions changed after the first answer.",
+    "The treatment history is the part a dermatologist would otherwise dig for: two products, two different responses, one of them a failure after a month.",
+    "\"Show patient's own words\" proves every line came from him.",
+    "Clarify in visit is short, and each line is something worth thirty seconds in the room.",
+  ],
+} as const;
+

@@ -40,6 +40,24 @@ function getClient(): Anthropic {
   return client;
 }
 
+/**
+ * Reduce a provider error to a fixed vocabulary before it can be recorded.
+ *
+ * SDK messages can carry URLs, request ids and fragments of configuration.
+ * Analytics never needs any of that — it needs to know that calls are failing
+ * and roughly why.
+ */
+export function errorReason(err: unknown): string {
+  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  if (message.includes("timeout") || message.includes("timed out")) return "timeout";
+  if (message.includes("429") || message.includes("rate")) return "rate_limit";
+  if (message.includes("401") || message.includes("403") || message.includes("api key")) return "auth";
+  if (message.includes("overload") || message.includes("529")) return "overloaded";
+  if (message.includes("econn") || message.includes("network") || message.includes("fetch")) return "network";
+  if (message.includes("500") || message.includes("502") || message.includes("503")) return "provider_error";
+  return "other";
+}
+
 const empty = <T>(error: string): ModelCallResult<T> => ({
   ok: false,
   data: null,
@@ -76,7 +94,7 @@ export async function callTool<T>(args: {
     }
     return { ok: true, data: block.input as T, inputTokens, outputTokens, costUsd };
   } catch (err) {
-    return empty(err instanceof Error ? err.message : "model_error");
+    return empty(errorReason(err));
   }
 }
 
@@ -110,6 +128,6 @@ export async function callText(args: {
       costUsd: estimateCostUsd(model, inputTokens, outputTokens),
     };
   } catch (err) {
-    return empty(err instanceof Error ? err.message : "model_error");
+    return empty(errorReason(err));
   }
 }

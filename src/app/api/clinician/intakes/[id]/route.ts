@@ -1,6 +1,6 @@
 import { bundleById, saveIntake } from "@/lib/store";
 import { fail, json } from "@/lib/api";
-import { clinicianReviewSchema } from "@/lib/domain/types";
+import { MAX_REVIEW_FIELD, clinicianReviewSchema } from "@/lib/domain/types";
 import { track } from "@/lib/analytics";
 
 type Params = { params: Promise<{ id: string }> };
@@ -33,7 +33,15 @@ export async function PATCH(req: Request, { params }: Params) {
     intake = { ...intake, hpi, hpiEditedByClinician: edited };
   }
   if (b.review && typeof b.review === "object") {
-    const parsed = clinicianReviewSchema.safeParse({ ...intake.review, ...b.review });
+    // Truncate before validating, so a physician who pastes a very long note
+    // gets it saved and trimmed rather than rejected mid-encounter.
+    const incoming = Object.fromEntries(
+      Object.entries(b.review as Record<string, unknown>).map(([k, v]) => [
+        k,
+        typeof v === "string" ? v.slice(0, MAX_REVIEW_FIELD) : v,
+      ]),
+    );
+    const parsed = clinicianReviewSchema.safeParse({ ...intake.review, ...incoming });
     if (!parsed.success) return fail("Invalid review fields.", 400);
     intake = {
       ...intake,

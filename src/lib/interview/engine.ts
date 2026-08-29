@@ -162,6 +162,27 @@ export function planNextQuestion(intake: Pick<Intake, "pathway" | "facts" | "ask
   return { slot: null, reason: "complete" };
 }
 
+/**
+ * How many questions are probably left.
+ *
+ * Honest rather than fixed: harvesting means a patient who explains everything
+ * up front really does get fewer questions, and telling them "3 of about 9"
+ * when they will be asked six more is both wrong and discouraging.
+ */
+export function estimateRemaining(
+  intake: Pick<Intake, "pathway" | "facts" | "askedSlots" | "questionCount">,
+): number {
+  const asked = new Set(intake.askedSlots);
+  const pending = slotsForPathway(intake.pathway).filter(
+    (s) => !asked.has(s.id) && !isSettled(intake.facts, s.id),
+  );
+  const core = pending.filter((s) => s.tier === "core").length;
+  const budgetLeft = Math.max(0, MAX_QUESTIONS - intake.questionCount);
+  // Conditional slots only get asked if there is room after the core ones.
+  const optional = Math.min(pending.length - core, Math.max(0, budgetLeft - core));
+  return Math.min(budgetLeft, core + optional);
+}
+
 /** True when every core slot for the pathway carries a value. */
 export function coreComplete(intake: Pick<Intake, "pathway" | "facts">): boolean {
   return slotsForPathway(intake.pathway)

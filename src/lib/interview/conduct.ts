@@ -235,7 +235,13 @@ export async function conductTurn(args: {
   const priorPartial = intake.facts.find(
     (f) => f.slot === askedSlot.id && f.partial === true && f.harvested === true,
   );
-  if (priorPartial && facts.length > 0) {
+  const mergeAddsSomething =
+    priorPartial !== undefined &&
+    facts.length > 0 &&
+    !facts[0].value.toLowerCase().includes(priorPartial.value.toLowerCase()) &&
+    !priorPartial.value.toLowerCase().includes(facts[0].value.toLowerCase());
+
+  if (priorPartial && facts.length > 0 && mergeAddsSomething) {
     const merged: Fact = {
       ...priorPartial,
       value: `${priorPartial.value.replace(/[.;]$/, "")}; ${lowerFirstChar(facts[0].value)}`.slice(0, 400),
@@ -246,6 +252,14 @@ export async function conductTurn(args: {
     intake = {
       ...intake,
       facts: [...intake.facts.filter((f) => f !== priorPartial), merged, ...facts.slice(1)],
+    };
+  } else if (priorPartial && facts.length > 0) {
+    // The follow-up restated what was already volunteered. Keep the fuller of
+    // the two rather than joining a sentence to itself.
+    const keep = facts[0].value.length >= priorPartial.value.length ? facts[0] : priorPartial;
+    intake = {
+      ...intake,
+      facts: [...intake.facts.filter((f) => f !== priorPartial), { ...keep, partial: false }, ...facts.slice(1)],
     };
   } else {
     intake = { ...intake, facts: [...intake.facts, ...facts] };

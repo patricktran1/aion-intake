@@ -1,7 +1,8 @@
 import { bundleByToken, saveIntake } from "@/lib/store";
 import type { Photo } from "@/lib/domain/types";
 import { fail, json, patientView } from "@/lib/api";
-import { MAX_PHOTOS, checkPhoto } from "@/lib/photos";
+import { LIMITS, allow, intakeKey } from "@/lib/ratelimit";
+import { MAX_PHOTOS, checkPhoto, isAcceptedDataUrl } from "@/lib/photos";
 import { track } from "@/lib/analytics";
 
 type Params = { params: Promise<{ token: string }> };
@@ -15,6 +16,9 @@ export async function POST(req: Request, { params }: Params) {
   const { token } = await params;
   const bundle = bundleByToken(token);
   if (!bundle) return fail("This intake link is no longer valid.", 404);
+  if (!allow(intakeKey(token, "photo"), LIMITS.photoUpload)) {
+    return fail("You're going a little fast — give it a moment and try again.", 429);
+  }
 
   let body: unknown;
   try {
@@ -31,7 +35,7 @@ export async function POST(req: Request, { params }: Params) {
   const caption = typeof b.caption === "string" ? b.caption.slice(0, 120) : "";
   const sharpness = typeof b.sharpness === "number" ? b.sharpness : undefined;
 
-  if (!dataUrl.startsWith("data:image/")) {
+  if (!isAcceptedDataUrl(dataUrl)) {
     return fail("That file didn't look like a photo. Please try again.", 400);
   }
   const bytes = Math.round((dataUrl.length * 3) / 4);

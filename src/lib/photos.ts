@@ -15,6 +15,23 @@ export const TARGET_LONG_EDGE = 1400;
 
 export const ACCEPTED_MIME = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 
+/**
+ * Uploads are restricted to raster data URLs. SVG is markup, and markup
+ * supplied by a stranger has no business being rendered next to a physician's
+ * clinical brief — even inside an <img>, where it is mostly inert. The seeded
+ * demo placeholders are SVG, but they come from this repository, not a request.
+ */
+export const ACCEPTED_DATA_URL_PREFIXES = [
+  "data:image/jpeg;",
+  "data:image/png;",
+  "data:image/webp;",
+  "data:image/jpg;",
+];
+
+export function isAcceptedDataUrl(dataUrl: string): boolean {
+  return ACCEPTED_DATA_URL_PREFIXES.some((p) => dataUrl.startsWith(p));
+}
+
 export interface PhotoCheckInput {
   mime: string;
   bytes: number;

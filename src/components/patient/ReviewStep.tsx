@@ -53,7 +53,7 @@ export function ReviewStep({
       <div className="mt-6 divide-y divide-[var(--color-line)] overflow-hidden rounded-xl border border-line bg-surface">
         {view.summary.map((section) =>
           section.items.map((item) => (
-            <div key={`${section.label}-${item.slot}`} className="px-4 py-4">
+            <div key={`${section.label}-${item.slot}`} className="px-4 py-3.5">
               <div className="flex items-baseline justify-between gap-3">
                 <h3 className="text-[12px] font-semibold uppercase tracking-[0.1em] text-muted">
                   {section.label}
@@ -65,7 +65,7 @@ export function ReviewStep({
                       setEditing(item.slot);
                       setDraft(item.text);
                     }}
-                    className="shrink-0 text-[13px] text-accent underline underline-offset-2"
+                    className="-my-2 -mr-2 shrink-0 px-3 py-2.5 text-[13px] text-accent underline underline-offset-2"
                   >
                     Edit
                   </button>

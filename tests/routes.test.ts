@@ -10,6 +10,7 @@ import { POST as noteRoute } from "@/app/api/clinician/intakes/[id]/note/route";
 import { DEMO_TOKENS } from "@/lib/demo/seed";
 import { getIntakeByToken, listBundles, resetDb } from "@/lib/store";
 import { resetAnalytics } from "@/lib/analytics";
+import { resetRateLimits } from "@/lib/ratelimit";
 
 const TOKEN = DEMO_TOKENS.acne;
 const params = (token: string) => ({ params: Promise.resolve({ token }) });
@@ -24,6 +25,7 @@ const post = (body?: unknown) =>
 beforeEach(() => {
   resetDb();
   resetAnalytics();
+  resetRateLimits();
 });
 
 async function completeIntake(token: string) {

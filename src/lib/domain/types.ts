@@ -93,12 +93,16 @@ export const aiUsageSchema = z.object({
 });
 export type AiUsage = z.infer<typeof aiUsageSchema>;
 
+/** Long enough for any real encounter note, short enough to bound storage. */
+export const MAX_REVIEW_FIELD = 20_000;
+const reviewField = () => z.string().max(MAX_REVIEW_FIELD).default("");
+
 export const clinicianReviewSchema = z.object({
-  exam: z.string().default(""),
-  assessment: z.string().default(""),
-  plan: z.string().default(""),
-  medications: z.string().default(""),
-  followUp: z.string().default(""),
+  exam: reviewField(),
+  assessment: reviewField(),
+  plan: reviewField(),
+  medications: reviewField(),
+  followUp: reviewField(),
   updatedAt: z.string().optional(),
 });
 export type ClinicianReview = z.infer<typeof clinicianReviewSchema>;

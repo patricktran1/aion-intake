@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Brand } from "@/components/Brand";
 import type { PatientView } from "@/lib/api";
-import { MAX_QUESTIONS } from "@/lib/interview/slots";
 import { Composer } from "./Composer";
 import { PhotoStep } from "./PhotoStep";
 import { ReviewStep } from "./ReviewStep";
@@ -92,7 +91,8 @@ export function IntakeApp({ initial }: { initial: PatientView }) {
     }
   }
 
-  const progress = Math.min(1, view.questionCount / MAX_QUESTIONS);
+  const asked = view.questionCount;
+  const progress = Math.min(1, asked / Math.max(1, asked + view.remaining));
 
   return (
     <div className="flex min-h-dvh-safe flex-col bg-paper">
@@ -100,8 +100,8 @@ export function IntakeApp({ initial }: { initial: PatientView }) {
         <div className="mx-auto flex w-full max-w-xl items-center justify-between px-5 py-3.5">
           <Brand size="sm" />
           {stage === "chat" && (
-            <span className="text-[12px] tabular-nums text-muted">
-              {view.questionCount} of about {MAX_QUESTIONS}
+            <span className="text-[12px] text-muted" aria-live="polite">
+              {progressLabel(view.remaining)}
             </span>
           )}
         </div>
@@ -202,6 +202,20 @@ export function IntakeApp({ initial }: { initial: PatientView }) {
   );
 }
 
+/**
+ * Progress as reassurance, not a countdown.
+ *
+ * The number of questions genuinely varies — a patient who explains everything
+ * at the start gets fewer — so this describes how much is left rather than
+ * promising a total the interview may not reach.
+ */
+function progressLabel(remaining: number): string {
+  if (remaining <= 0) return "Last question";
+  if (remaining === 1) return "One more after this";
+  if (remaining <= 3) return "Nearly there";
+  return "A few questions to go";
+}
+
 function Welcome({
   view,
   onStart,
@@ -229,21 +243,21 @@ function Welcome({
         speed before {when}.
       </h1>
       <p className="mt-5 text-[17px] leading-relaxed text-ink-soft">
-        A few questions about what brought you in, in your own words. Most people finish in
-        three to five minutes. You can type or use your voice, and add a photo if you want
-        to.
+        A few questions about what brought you in, in your own words. Type or talk, add a
+        photo if you want to, and stop whenever you need — it saves as you go.
+      </p>
+      <p className="mt-4 text-[17px] leading-relaxed text-ink-soft">
+        Whatever you tell us here, you won&rsquo;t have to explain again in the room.
       </p>
 
       <div className="mt-7 rounded-xl border border-line bg-surface p-5">
         <p className="text-[15px] leading-relaxed text-ink-soft">
-          AION Intake helps prepare information for your upcoming visit. It does not provide
-          medical advice, diagnosis, or treatment, and it is not a substitute for your
-          appointment. Your responses and photos will be reviewed in the context of that
-          visit.
+          AION Intake prepares information for your upcoming visit. It doesn&rsquo;t give
+          medical advice, diagnosis, or treatment, and it isn&rsquo;t a substitute for your
+          appointment. Your answers and photos are reviewed as part of that visit.
         </p>
         <p className="mt-3 text-[15px] leading-relaxed text-ink-soft">
-          Please don&rsquo;t use it for urgent or emergency concerns — for those, call your
-          clinic, or dial 911 or your local emergency number.
+          Please don&rsquo;t use it for anything urgent. For that, call your clinic, or 911.
         </p>
       </div>
 
@@ -261,7 +275,7 @@ function Welcome({
         </p>
       )}
       <p className="mt-4 text-center text-[13px] text-muted">
-        Takes about 3–5 minutes · You can stop and come back
+        About 3 minutes · Your answers save as you go
       </p>
     </div>
   );

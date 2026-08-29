@@ -78,8 +78,9 @@ export function track(event: AnalyticsEvent, props: EventProps = {}): void {
   const s = store();
   s.events.push(record);
   if (s.events.length > MAX_EVENTS) s.events.splice(0, s.events.length - MAX_EVENTS);
-  if (process.env.NODE_ENV !== "test") {
-    // Structured line: greppable in any host's logs, no PHI by construction.
+  // Structured line: greppable in any host's logs, no PHI by construction.
+  // Off in tests and in local scripts, where it drowns the output that matters.
+  if (process.env.NODE_ENV !== "test" && process.env.AION_LOG_ANALYTICS !== "0") {
     console.log(`[aion.analytics] ${JSON.stringify(record)}`);
   }
 }

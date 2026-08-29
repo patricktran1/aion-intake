@@ -156,8 +156,24 @@ const SECTIONS: Record<Pathway, { label: string; slots: string[] }[]> = {
  * reported" when nobody asked would be an invented negative.
  */
 export function buildBrief(intake: Intake): BriefSection[] {
+  // Patients repeat themselves, and a patient who answers three questions with
+  // the same sentence should not produce three identical rows. The first
+  // section to carry a value keeps it; later duplicates are dropped, because a
+  // brief whose rows all read the same is one a dermatologist stops trusting.
+  const seen = new Set<string>();
+  const key = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
   return SECTIONS[intake.pathway]
-    .map((g) => ({ label: g.label, items: itemsFor(intake, g.slots) }))
+    .map((g) => ({
+      label: g.label,
+      items: itemsFor(intake, g.slots).filter((item) => {
+        const k = key(item.text);
+        if (k.length < 12) return true;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      }),
+    }))
     .filter((s) => s.items.length > 0);
 }
 
@@ -303,12 +319,16 @@ export function composeHpiDeterministic(bundle: IntakeBundle): string {
   lines.push("");
 
   const rendered = new Set<string>();
+  const seenValues = new Set<string>();
   for (const group of SECTIONS[intake.pathway]) {
     if (group.slots.includes("concern") || group.slots.includes("goal")) continue;
     for (const slotId of group.slots) {
       for (const f of intake.facts.filter((x) => x.slot === slotId && x.value.trim())) {
         const line = `${group.label}: ${phrase(f)}.`;
         if (rendered.has(line)) continue;
+        const valueKey = f.value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        if (valueKey.length >= 12 && seenValues.has(valueKey)) continue;
+        seenValues.add(valueKey);
         rendered.add(line);
         lines.push(line);
       }
@@ -317,8 +337,11 @@ export function composeHpiDeterministic(bundle: IntakeBundle): string {
 
   const goal = intake.facts.find((f) => f.slot === "goal");
   if (goal) {
-    lines.push("");
-    lines.push(`Patient's stated goal for the visit: ${phrase(goal)}.`);
+    const goalKey = goal.value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (goalKey.length < 12 || !seenValues.has(goalKey)) {
+      lines.push("");
+      lines.push(`Patient's stated goal for the visit: ${phrase(goal)}.`);
+    }
   }
 
   const missing = notEstablished(intake);

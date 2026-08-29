@@ -1,5 +1,6 @@
 import { bundleByToken, saveIntake } from "@/lib/store";
 import { fail, json, patientView } from "@/lib/api";
+import { LIMITS, allow, intakeKey } from "@/lib/ratelimit";
 import { conductTurn } from "@/lib/interview/conduct";
 
 type Params = { params: Promise<{ token: string }> };
@@ -8,6 +9,9 @@ export async function POST(req: Request, { params }: Params) {
   const { token } = await params;
   const bundle = bundleByToken(token);
   if (!bundle) return fail("This intake link is no longer valid.", 404);
+  if (!allow(intakeKey(token, "intake"), LIMITS.intakeWrite)) {
+    return fail("You're going a little fast — give it a moment and try again.", 429);
+  }
   if (bundle.intake.status === "ready_for_review" || bundle.intake.status === "reviewed") {
     // Duplicate submit or a stale tab. Return current state rather than erroring.
     return json(patientView(bundle));

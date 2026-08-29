@@ -91,7 +91,8 @@ export default function Home() {
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-soft">
             Everything in this build is synthetic. There is no real patient information in
             it. Three demo patients have already completed intake; two open links let you
-            walk the patient side yourself.
+            walk the patient side yourself. If you are running this for someone, start from
+            the demo controls.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <Link
@@ -105,6 +106,12 @@ export default function Home() {
               className="rounded-md border border-line px-3.5 py-2 text-sm text-ink transition hover:border-ink-soft"
             >
               Open intake — Lena O. (unspecified)
+            </Link>
+            <Link
+              href="/demo"
+              className="rounded-md border border-line px-3.5 py-2 text-sm text-ink transition hover:border-ink-soft"
+            >
+              Demo controls and script
             </Link>
             <ResetButton />
           </div>

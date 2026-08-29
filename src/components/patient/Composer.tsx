@@ -124,7 +124,7 @@ export function Composer({
           </button>
         </div>
 
-        <div className="mt-2 flex min-h-[18px] items-center justify-between gap-3">
+        <div className="mt-1 flex min-h-[40px] items-center justify-between gap-3">
           <p className="text-[12px] text-muted">
             {speech.error ? (
               <span className="text-flag">{speech.error}</span>
@@ -138,7 +138,7 @@ export function Composer({
             type="button"
             onClick={() => onSend("", "text")}
             disabled={disabled}
-            className="shrink-0 text-[13px] text-muted underline underline-offset-2 transition hover:text-ink disabled:opacity-40"
+            className="-mr-2 shrink-0 px-2 py-2.5 text-[13px] text-muted underline underline-offset-2 transition hover:text-ink disabled:opacity-40"
           >
             Skip this one
           </button>

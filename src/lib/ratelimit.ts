@@ -52,6 +52,23 @@ export const LIMITS = {
    * enough that a script cannot churn the store.
    */
   demoResetGlobal: { burst: 30, refillPerSecond: 0.02 },
+  /**
+   * Clinician sign-in, keyed per email address rather than per address.
+   * Keying on IP would let one attacker lock out an entire practice sharing
+   * one office connection, and would be evaded by anyone with a second
+   * address anyway. Tight, because a clinician who has forgotten their
+   * password should call the practice rather than guess twenty more times.
+   */
+  login: { burst: 8, refillPerSecond: 0.05 },
+  /**
+   * Patient second-factor attempts. The token itself also counts failures in
+   * the database and locks after five; this bounds the rate at which those
+   * five can be spent, and it survives a process restart no better than any
+   * other in-memory bucket — which is why the durable counter exists too.
+   */
+  patientVerify: { burst: 6, refillPerSecond: 0.02 },
+  /** Serving photo bytes. Generous: a brief with three photos is one page. */
+  photoRead: { burst: 60, refillPerSecond: 1 },
 } as const;
 
 /** @returns true when the request may proceed. */

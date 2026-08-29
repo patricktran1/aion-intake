@@ -12,3 +12,7 @@ next-env.d.ts
 coverage/
 test-results/
 screenshots/
+
+# Local pilot workspace — synthetic data, never committed.
+.pglite/
+.objects/

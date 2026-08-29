@@ -20,18 +20,26 @@
     "eval:gate": "tsx evals/gate.ts",
     "eval:ablate": "tsx evals/ablate.ts",
     "cost": "tsx scripts/cost.ts",
-    "inspect": "tsx scripts/inspect.ts"
+    "inspect": "tsx scripts/inspect.ts",
+    "db:migrate": "tsx scripts/pilot.ts migrate",
+    "db:seed": "tsx scripts/pilot.ts seed",
+    "pilot:check": "tsx scripts/pilot.ts check",
+    "pilot:retention": "tsx scripts/pilot.ts retention",
+    "dev:pilot": "bash scripts/dev-pilot.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
     "next": "16.3.3",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^4.5.2"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "eslint": "^9.0.0",

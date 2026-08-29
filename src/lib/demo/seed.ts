@@ -8,7 +8,7 @@ import type {
   Practice,
   Visit,
 } from "@/lib/domain/types";
-import type { Db } from "@/lib/store";
+import type { MemoryDb } from "@/lib/store";
 import { DEFAULT_MODEL } from "@/lib/ai/cost";
 
 /**
@@ -143,7 +143,7 @@ function completed(
   };
 }
 
-export function seedData(): Db {
+export function seedData(): Omit<MemoryDb, "audit"> {
   counter = 0;
   const practice: Practice = {
     id: "prac_lakeview",
@@ -400,7 +400,7 @@ export function seedData(): Db {
   const daniel = blankIntake("vis_daniel", DEMO_TOKENS.acne);
   const lena = blankIntake("vis_lena", DEMO_TOKENS.open);
 
-  const d: Db = {
+  const d: Omit<MemoryDb, "audit"> = {
     practices: new Map([[practice.id, practice]]),
     patients: new Map(patients.map((p) => [p.id, p])),
     visits: new Map(visits.map((v) => [v.id, v])),

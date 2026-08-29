@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   classifyCertainty,
   computeOpenQuestions,
+  isNonAnswer,
+  stripFiller,
   coreComplete,
   detectPathway,
   detectUrgent,
@@ -147,23 +149,157 @@ describe("deterministic extraction", () => {
   });
 });
 
-describe("open questions for the physician", () => {
-  it("surfaces skipped questions", () => {
+describe("clarify-in-visit", () => {
+  /**
+   * A realistic baseline: every rash core slot answered clearly, so a test can
+   * perturb exactly one thing and see only that thing surface.
+   */
+  const completeRash = (overrides: Record<string, Fact> = {}) => {
+    const base: Record<string, Fact> = {
+      concern: fact("concern", "Itchy rash on both arms"),
+      location: fact("location", "Both forearms, no spread"),
+      timeline: fact("timeline", "Started three weeks ago, slowly worse"),
+      symptoms: fact("symptoms", "Itchy, worse at night"),
+      triggers: fact("triggers", "Hot showers make it worse"),
+      treatments: fact("treatments", "Hydrocortisone, it helped for a week then stopped"),
+      context: fact("context", "No medications"),
+      goal: fact("goal", "Make it stop itching"),
+    };
+    const merged = { ...base, ...overrides };
+    return {
+      facts: Object.values(merged).filter((f) => f.value !== "__drop__"),
+      askedSlots: Object.keys(merged),
+    };
+  };
+
+  it("flags a high-value question the patient did not answer", () => {
     const out = computeOpenQuestions({ pathway: "rash", facts: [], askedSlots: ["location"] });
-    expect(out.some((q) => q.includes("skipped"))).toBe(true);
+    expect(out.some((q) => q.includes("Location") && q.includes("did not answer"))).toBe(true);
   });
 
-  it("surfaces hedged answers as approximate rather than silently accepting them", () => {
+  it("ignores a low-value question the patient did not answer", () => {
+    const { facts, askedSlots } = completeRash();
+    const out = computeOpenQuestions({ pathway: "rash", facts, askedSlots: [...askedSlots, "exposures"] });
+    expect(out).toEqual([]);
+  });
+
+  it("flags an approximate timeline, because timing changes the differential", () => {
+    const { facts, askedSlots } = completeRash({
+      timeline: fact("timeline", "Started around May I think", "approximate"),
+    });
+    const out = computeOpenQuestions({ pathway: "rash", facts, askedSlots });
+    expect(out.some((q) => q.toLowerCase().includes("estimate"))).toBe(true);
+  });
+
+  it("does not flag an approximate answer that is not the timeline", () => {
+    const { facts, askedSlots } = completeRash({
+      triggers: fact("triggers", "Maybe heat", "approximate"),
+    });
+    expect(computeOpenQuestions({ pathway: "rash", facts, askedSlots })).toEqual([]);
+  });
+
+  it("flags a treatment the patient could not name", () => {
+    const { facts, askedSlots } = completeRash({
+      treatments: fact("treatments", "A cream my doctor gave me, it helped a bit"),
+    });
+    const out = computeOpenQuestions({ pathway: "rash", facts, askedSlots });
+    expect(out.some((q) => q.includes("could not name"))).toBe(true);
+  });
+
+  it("flags a treatment whose response was never described", () => {
+    const { facts, askedSlots } = completeRash({
+      treatments: fact("treatments", "Hydrocortisone and Eucerin"),
+    });
+    const out = computeOpenQuestions({ pathway: "rash", facts, askedSlots });
+    expect(out.some((q) => q.includes("response is not"))).toBe(true);
+  });
+
+  it("says nothing about a treatment that was named with its response", () => {
+    const { facts, askedSlots } = completeRash();
+    expect(computeOpenQuestions({ pathway: "rash", facts, askedSlots })).toEqual([]);
+  });
+
+  it("flags a core slot the interview never reached", () => {
+    const { facts, askedSlots } = completeRash({ treatments: fact("treatments", "__drop__") });
     const out = computeOpenQuestions({
       pathway: "rash",
-      facts: [fact("timeline", "Started around May", "approximate")],
-      askedSlots: ["timeline"],
+      facts,
+      askedSlots: askedSlots.filter((s) => s !== "treatments"),
     });
-    expect(out.some((q) => q.includes("Approximate only") || q.includes("approximate only"))).toBe(true);
+    expect(out.some((q) => q.includes("not covered"))).toBe(true);
   });
 
-  it("surfaces core slots the budget never reached", () => {
-    const out = computeOpenQuestions({ pathway: "rash", facts: [], askedSlots: [] });
-    expect(out.some((q) => q.includes("question budget"))).toBe(true);
+  it("collapses a patient who answered almost nothing into one honest line", () => {
+    const out = computeOpenQuestions({
+      pathway: "rash",
+      facts: [],
+      askedSlots: ["location", "timeline", "symptoms", "treatments", "context"],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("answered very little");
+  });
+
+  it("leads with several concerns when the patient raised them", () => {
+    const out = computeOpenQuestions({
+      pathway: "general",
+      facts: [fact("location", "Nose, shins and nails"), fact("timeline", "Varies")],
+      askedSlots: ["location", "timeline"],
+      concernCount: 3,
+    });
+    expect(out[0]).toContain("3 separate concerns");
+  });
+
+  it("never returns more than four items", () => {
+    const out = computeOpenQuestions({
+      pathway: "lesion",
+      facts: [
+        fact("concern", "A few things"),
+        fact("lesion_timeline", "Maybe a year", "approximate"),
+        fact("treatments", "some cream"),
+      ],
+      askedSlots: ["concern", "lesion_timeline", "lesion_symptoms", "location", "sun_history", "treatments"],
+      concernCount: 2,
+    });
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.length).toBeLessThanOrEqual(4);
+  });
+
+  it("stays silent when a complete history left nothing to chase", () => {
+    const { facts, askedSlots } = completeRash();
+    expect(computeOpenQuestions({ pathway: "rash", facts, askedSlots })).toEqual([]);
+  });
+});
+
+describe("non-answers", () => {
+  it.each(["not sure", "idk", "dunno", "  ", "no idea", "I don't know", "?"])(
+    "treats %s as carrying no information",
+    (t) => {
+      expect(isNonAnswer(t)).toBe(true);
+    },
+  );
+
+  it.each([
+    "Both arms and my neck",
+    "I think around May, not sure exactly which week",
+    "Nothing helps",
+    "No",
+  ])("treats %s as an answer", (t) => {
+    expect(isNonAnswer(t)).toBe(false);
+  });
+
+  it("never stores a non-answer as a fact", () => {
+    expect(extractDeterministic(OPENING_SLOT, "not sure", "t")).toEqual([]);
+    expect(extractDeterministic(OPENING_SLOT, "idk", "t")).toEqual([]);
+  });
+});
+
+describe("filler stripping", () => {
+  it("removes conversational throat-clearing from the front of an answer", () => {
+    expect(stripFiller("OK so I've had a rash")).toBe("I've had a rash");
+    expect(stripFiller("Um, well, it itches")).toBe("it itches");
+  });
+
+  it("leaves a clean answer alone", () => {
+    expect(stripFiller("I've had a rash for three months")).toBe("I've had a rash for three months");
   });
 });

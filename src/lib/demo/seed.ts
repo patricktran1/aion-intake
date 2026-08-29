@@ -85,6 +85,8 @@ export function blankIntake(visitId: string, token = newToken()): Intake {
     patientQuestions: [],
     askedSlots: [],
     questionCount: 0,
+    concernCount: 1,
+    consecutiveSkips: 0,
     lastActivityAt: now(),
     voiceTurns: 0,
     textTurns: 0,

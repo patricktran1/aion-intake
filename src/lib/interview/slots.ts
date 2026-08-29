@@ -25,6 +25,12 @@ export interface Slot {
   askWhen?: (ctx: SlotContext) => boolean;
   /** Quick-tap suggestions for mobile. Never the only way to answer. */
   chips?: string[];
+  /**
+   * Asked instead of `question` when the patient has already volunteered part
+   * of the answer. Asking "when did it start?" of someone who just said "for
+   * two weeks" is the fastest way to make an interview feel unheard.
+   */
+  narrowQuestion?: string;
 }
 
 export interface SlotContext {
@@ -72,6 +78,7 @@ const SHARED_TIMELINE: Slot = {
   facets: ["onset", "progression"],
   question:
     "When did you first notice it, and has it been getting better, worse, or staying about the same?",
+  narrowQuestion: "Since it started, has it been getting better, worse, or staying about the same?",
   briefLabel: "Timeline",
   tier: "core",
   chips: ["Getting worse", "About the same", "Slowly improving", "Comes and goes"],
@@ -81,6 +88,7 @@ const SHARED_TREATMENTS: Slot = {
   id: "treatments",
   facets: ["treatments_tried", "treatment_response"],
   question: "Have you tried anything for it so far, and did any of it help?",
+  narrowQuestion: "You mentioned trying something for it — did it help at all?",
   hint: "Creams, pills, home remedies — anything counts, including nothing yet.",
   briefLabel: "Tried so far",
   tier: "core",
@@ -153,6 +161,7 @@ const LESION_PATH: Slot[] = [
     facets: ["onset", "progression"],
     question:
       "How long have you had it, and has it changed at all — size, colour, shape, or border?",
+    narrowQuestion: "Has it changed at all since you first noticed it — size, colour, shape, or border?",
     briefLabel: "Timeline and change",
     tier: "core",
     chips: ["It's new", "Had it for years", "It's getting bigger", "The colour changed"],
@@ -200,6 +209,7 @@ const ACNE_PATH: Slot[] = [
     facets: ["treatments_tried", "treatment_response"],
     question:
       "What have you tried so far — washes, creams, antibiotics, anything prescription — and how did it go?",
+    narrowQuestion: "You mentioned trying something — how did it go?",
     hint: "If you remember names that's great, but a rough description is fine.",
     briefLabel: "Tried so far",
     tier: "core",

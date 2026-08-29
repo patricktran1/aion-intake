@@ -6,6 +6,8 @@ import {
   composeHpiDeterministic,
   composeNote,
   headline,
+  headlineTimeline,
+  notEstablished,
 } from "@/lib/ai/compose";
 import { guardAll } from "@/lib/ai/guard";
 import { seedData } from "@/lib/demo/seed";
@@ -33,8 +35,32 @@ describe("pre-visit brief", () => {
 
   it("gives a headline a dermatologist can read in one glance", () => {
     const h = headline(bundleFor("pat_robert").intake);
-    expect(h.length).toBeLessThan(240);
+    expect(h.length).toBeLessThan(180);
     expect(h.toLowerCase()).toContain("spot");
+  });
+
+  it("never ends a headline in a clipped word", () => {
+    for (const id of ["pat_maya", "pat_robert", "pat_priya"]) {
+      const h = headline(bundleFor(id).intake);
+      expect(h, `${id} headline must not be truncated`).not.toContain("…");
+    }
+  });
+
+  it("does not repeat a duration the concern already carries", () => {
+    const h = headline(bundleFor("pat_maya").intake);
+    expect(h.match(/month/gi)?.length ?? 0).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps a short timeline clause whole rather than clipping it", () => {
+    expect(headlineTimeline("Started three weeks ago, slowly worse")).toBe(
+      "Started three weeks ago, slowly worse",
+    );
+  });
+
+  it("falls back to just the duration when the timeline is too long for a headline", () => {
+    const long =
+      "Present for years but reported by his wife as darker and larger than before and he cannot see it himself at all";
+    expect(headlineTimeline(long)).toBe("for years");
   });
 });
 
@@ -65,12 +91,26 @@ describe("deterministic draft HPI", () => {
     expect(hpi).toContain("patient unsure");
   });
 
-  it("says nothing at all about slots that were never filled", () => {
+  it("never states content for a slot that was never filled", () => {
     const b = bundleFor("pat_maya");
     const stripped = { ...b, intake: { ...b.intake, facts: b.intake.facts.slice(0, 1) } };
     const hpi = composeHpiDeterministic(stripped);
-    expect(hpi.toLowerCase()).not.toContain("treatment");
-    expect(hpi.toLowerCase()).not.toContain("allerg");
+    const body = hpi.split("Not established during intake:")[0];
+    expect(body).not.toMatch(/^Tried so far:/m);
+    expect(body).not.toMatch(/^Medications, allergies, history:/m);
+  });
+
+  it("names what the intake did not establish, so absence is not read as a negative", () => {
+    const b = bundleFor("pat_maya");
+    const stripped = { ...b, intake: { ...b.intake, facts: b.intake.facts.slice(0, 2) } };
+    const hpi = composeHpiDeterministic(stripped);
+    expect(hpi).toContain("Not established during intake:");
+    expect(hpi).toContain("Tried so far");
+  });
+
+  it("omits the not-established line when the intake covered everything", () => {
+    const hpi = composeHpiDeterministic(bundleFor("pat_robert"));
+    expect(hpi).not.toContain("Not established during intake:");
   });
 
   it("quotes the patient's own words for the presenting concern", () => {
@@ -99,6 +139,23 @@ describe("model HPI acceptance", () => {
     const good =
       "Patient reports an itchy rash affecting both arms for about three months, which she describes as \"driving me crazy at night\". It started on the insides of both elbows and now also involves her neck and some of her hands. She states hot showers make it much worse, and thick moisturiser helps for maybe an hour.";
     expect(acceptOrFallbackHpi(good, b).accepted).toBe(true);
+  });
+});
+
+describe("what the intake did not establish", () => {
+  it("names only sections with no answer at all", () => {
+    const b = bundleFor("pat_maya");
+    expect(notEstablished(b.intake)).toEqual(["New exposures"]);
+  });
+
+  it("returns nothing when every section was covered", () => {
+    expect(notEstablished(bundleFor("pat_robert").intake)).toEqual([]);
+  });
+
+  it("never names the primary concern, which is always present", () => {
+    const b = bundleFor("pat_maya");
+    const stripped = { ...b.intake, facts: [] };
+    expect(notEstablished(stripped)).not.toContain("Primary concern");
   });
 });
 

@@ -16,6 +16,8 @@ export const ANALYTICS_EVENTS = [
   "intake_question_answered",
   "intake_voice_used",
   "intake_photo_uploaded",
+  "intake_facts_harvested",
+  "intake_ended_early",
   "intake_photo_rejected",
   "intake_review_edited",
   "intake_submitted",

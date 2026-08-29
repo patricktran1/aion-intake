@@ -13,6 +13,7 @@ import {
 import { acceptOrFallbackHpi, ageFrom, composeHpiDeterministic } from "@/lib/ai/compose";
 import { isSafeQuestion } from "@/lib/ai/guard";
 import {
+  isPartiallyFilled,
   classifyCertainty,
   computeOpenQuestions,
   detectPathway,
@@ -20,10 +21,15 @@ import {
   extractDeterministic,
   findSlot,
   isEmptyAnswer,
+  isNonAnswer,
   planNextQuestion,
   tidy,
 } from "./engine";
-import { MAX_QUESTIONS, OPENING_SLOT, type Slot } from "./slots";
+import { countConcerns, harvest } from "./harvest";
+import { MAX_QUESTIONS, OPENING_SLOT, PATHWAY_SLOTS, type Slot } from "./slots";
+
+/** After this many unanswered questions in a row, stop asking. */
+const SKIP_TOLERANCE = 2;
 
 /**
  * Orchestration for one conversational turn.
@@ -142,10 +148,16 @@ export async function conductTurn(args: {
 
   const lastAssistant = [...intake.messages].reverse().find((m) => m.role === "assistant");
   const askedSlotId = lastAssistant?.targets[0] ?? OPENING_SLOT.id;
+  const isOpening = askedSlotId === OPENING_SLOT.id;
 
-  // The pathway is chosen once, from the opening answer, by rules.
-  if (askedSlotId === OPENING_SLOT.id && answer) {
-    intake = { ...intake, pathway: detectPathway(answer) };
+  if (isOpening && answer) {
+    intake = { ...intake, pathway: detectPathway(answer), concernCount: countConcerns(answer) };
+  } else if (intake.pathway === "general" && intake.questionCount <= 2 && answer) {
+    // One chance to correct course. A vague opener ("there's a thing on my
+    // cheek") often becomes obvious on the next answer ("it bleeds and scabs"),
+    // and it is cheap to switch before the pathway-specific questions begin.
+    const revised = detectPathway(`${lastPatientText(intake)} ${answer}`);
+    if (revised !== "general") intake = { ...intake, pathway: revised };
   }
   if (answer && detectUrgent(answer)) {
     intake = { ...intake, urgentFlag: true };
@@ -167,7 +179,7 @@ export async function conductTurn(args: {
   const empty = isEmptyAnswer(answer);
 
   // Plan the next question deterministically, before any model call.
-  const planned = planNextQuestion({
+  let planned = planNextQuestion({
     pathway: intake.pathway,
     facts: empty ? intake.facts : [...intake.facts, ...extractDeterministic(askedSlot, answer, at)],
     askedSlots: intake.askedSlots,
@@ -176,7 +188,7 @@ export async function conductTurn(args: {
 
   let facts: Fact[] = [];
   let patientQuestions: string[] = [];
-  let questionText: string | null = planned.slot?.question ?? null;
+  let questionText: string | null = questionFor(planned.slot, intake.facts);
 
   if (!empty) {
     if (isModelEnabled()) {
@@ -187,7 +199,7 @@ export async function conductTurn(args: {
           askedSlot: askedSlot.id,
           facets: askedSlot.facets,
           answer,
-          nextQuestion: planned.slot?.question ?? null,
+          nextQuestion: questionFor(planned.slot, intake.facts),
           recentTranscript: recentTranscript(intake),
         }),
         tool: TURN_TOOL,
@@ -218,7 +230,44 @@ export async function conductTurn(args: {
     }
   }
 
-  intake = { ...intake, facts: [...intake.facts, ...facts] };
+  // When the patient volunteered half an answer and we asked a narrowed
+  // follow-up, the two halves belong in one row, not two.
+  const priorPartial = intake.facts.find(
+    (f) => f.slot === askedSlot.id && f.partial === true && f.harvested === true,
+  );
+  if (priorPartial && facts.length > 0) {
+    const merged: Fact = {
+      ...priorPartial,
+      value: `${priorPartial.value.replace(/[.;]$/, "")}; ${lowerFirstChar(facts[0].value)}`.slice(0, 400),
+      verbatim: `${priorPartial.verbatim} / ${facts[0].verbatim}`.slice(0, 2000),
+      certainty: facts[0].certainty === "stated" ? priorPartial.certainty : facts[0].certainty,
+      partial: false,
+    };
+    intake = {
+      ...intake,
+      facts: [...intake.facts.filter((f) => f !== priorPartial), merged, ...facts.slice(1)],
+    };
+  } else {
+    intake = { ...intake, facts: [...intake.facts, ...facts] };
+  }
+
+  // Read anything else the answer already covered, so we do not ask for it.
+  // Most valuable on the opening answer, where patients tell their whole story.
+  if (!empty && answer.length >= 25) {
+    const alreadyHave = new Set(intake.facts.map((f) => f.slot));
+    const eligible = PATHWAY_SLOTS[intake.pathway]
+      .map((sl) => sl.id)
+      .filter((sid) => sid !== askedSlot.id && !alreadyHave.has(sid) && !intake.askedSlots.includes(sid));
+    const harvested = harvest(answer, eligible, at);
+    if (harvested.length > 0) {
+      intake = { ...intake, facts: [...intake.facts, ...harvested] };
+      track("intake_facts_harvested", {
+        intake_id: intake.id,
+        count: harvested.length,
+        from_opening: isOpening,
+      });
+    }
+  }
   if (patientQuestions.length > 0) {
     intake = { ...intake, patientQuestions: [...intake.patientQuestions, ...patientQuestions] };
   } else if (!empty && /\b(will|does|is|can|should|could|what|why|how)\b.*\?/i.test(answer)) {
@@ -227,10 +276,45 @@ export async function conductTurn(args: {
     if (q) intake = { ...intake, patientQuestions: [...intake.patientQuestions, q.trim().slice(0, 200)] };
   }
 
-  const finished = !planned.slot || intake.questionCount >= MAX_QUESTIONS;
+  const skipped = empty || isNonAnswer(answer);
+  intake = {
+    ...intake,
+    consecutiveSkips: skipped ? intake.consecutiveSkips + 1 : 0,
+  };
+
+  // A patient who has stopped answering is not going to start. Ending early is
+  // kinder than grinding through the remaining questions, and the physician
+  // learns more from "they disengaged" than from six blank slots.
+  const disengaged =
+    intake.consecutiveSkips >= SKIP_TOLERANCE && intake.questionCount >= 3;
+
+  const replanned = planNextQuestion({
+    pathway: intake.pathway,
+    facts: intake.facts,
+    askedSlots: intake.askedSlots,
+    questionCount: intake.questionCount,
+  });
+  if (replanned.slot?.id !== planned.slot?.id) {
+    // Harvesting filled the slot we were about to ask about. Take the next one
+    // and, since the model phrased a question for the old slot, use the
+    // engine's own wording for the new one.
+    planned = replanned;
+    questionText = questionFor(replanned.slot, intake.facts);
+  }
+
+  const finished = !planned.slot || intake.questionCount >= MAX_QUESTIONS || disengaged;
 
   if (finished || !questionText || !planned.slot) {
     intake = { ...intake, openQuestions: computeOpenQuestions(intake) };
+    track("intake_question_answered", {
+      intake_id: intake.id,
+      slot: askedSlot.id,
+      input_mode: args.inputMode,
+      empty,
+      certainty: empty ? "unclear" : classifyCertainty(answer),
+      question_index: intake.questionCount,
+    });
+    if (disengaged) track("intake_ended_early", { intake_id: intake.id, reason: "disengaged" });
     return { intake, nextQuestion: null, finished: true };
   }
 
@@ -305,4 +389,24 @@ export async function generateHpi(bundle: IntakeBundle): Promise<{ intake: Intak
   }
   intake = { ...intake, hpi: verdict.text, hpiGenerated: verdict.text };
   return { intake, usedModel: verdict.accepted };
+}
+
+/**
+ * The wording for a slot: the narrowed follow-up when the patient has already
+ * volunteered half the answer, the full question otherwise.
+ */
+function questionFor(slot: Slot | null | undefined, facts: Fact[]): string | null {
+  if (!slot) return null;
+  if (slot.narrowQuestion && isPartiallyFilled(facts, slot.id)) return slot.narrowQuestion;
+  return slot.question;
+}
+
+function lowerFirstChar(s: string): string {
+  return s.length > 1 && /[a-z]/.test(s[1]) ? s.charAt(0).toLowerCase() + s.slice(1) : s;
+}
+
+/** The patient's most recent message, used when re-checking the pathway. */
+function lastPatientText(intake: Intake): string {
+  const patientTurns = intake.messages.filter((m) => m.role === "patient");
+  return patientTurns[patientTurns.length - 1]?.text ?? "";
 }

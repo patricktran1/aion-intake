@@ -25,6 +25,7 @@ const PATHWAY_SIGNALS: Record<Exclude<Pathway, "general">, { re: RegExp; weight:
     { re: /\bsore that (won'?t|will not|doesn'?t|does not) heal\b/, weight: 14 },
     { re: /\b(changing|changed|new|dark|bleeding)\s+(spot|mole|bump|patch)\b/, weight: 12 },
     { re: /\bskin check\b/, weight: 8 },
+    { re: /\b(?:thing|lump|patch|blemish|scab|sore)\b[^.?!]{0,20}\bon my\b/, weight: 8 },
   ],
   acne: [
     { re: /\bacne\b/, weight: 14 },
@@ -34,12 +35,13 @@ const PATHWAY_SIGNALS: Record<Exclude<Pathway, "general">, { re: RegExp; weight:
     { re: /\bcystic\b/, weight: 8 },
   ],
   hair_loss: [
-    { re: /\bhair\b[^.?!]{0,30}\b(loss|losing|falling|fall(s|ing)? out|shedding|thin(ning)?|comes? out)\b/, weight: 16 },
+    { re: /\bhair\b[^.?!]{0,30}\b(loss|losing|fall(?:s|ing)?|shed(?:s|ding)?|thin(?:ning)?|com(?:es|ing) out|coming out|breaking off)\b/, weight: 16 },
     { re: /\b(losing|lost)\b[^.?!]{0,20}\bhair\b/, weight: 16 },
     { re: /\bhair loss|hair thinning|alopecia\b/, weight: 16 },
     { re: /\b(bald|balding|bald spot|hairline|receding)\b/, weight: 12 },
     { re: /\b(scalp is showing|part (is|looks) wider|widening part)\b/, weight: 12 },
     { re: /\bshedding\b/, weight: 8 },
+    { re: /\b(?:worried|concerned) about my hair\b|\bmy hair\b/, weight: 9 },
   ],
   rash: [
     { re: /\brash(es)?\b/, weight: 14 },
@@ -108,6 +110,15 @@ export interface PlanResult {
 const hasFact = (facts: Fact[], slotId: string) =>
   facts.some((f) => f.slot === slotId && f.value.trim().length > 0);
 
+/** A slot answered only in part still has a question worth asking. */
+export const isPartiallyFilled = (facts: Fact[], slotId: string): boolean => {
+  const own = facts.filter((f) => f.slot === slotId && f.value.trim().length > 0);
+  return own.length > 0 && own.every((f) => f.partial === true);
+};
+
+const isSettled = (facts: Fact[], slotId: string) =>
+  hasFact(facts, slotId) && !isPartiallyFilled(facts, slotId);
+
 /**
  * Choose the next question.
  *
@@ -125,7 +136,7 @@ export function planNextQuestion(intake: Pick<Intake, "pathway" | "facts" | "ask
   const asked = new Set(intake.askedSlots);
   const ctx = { pathway: intake.pathway, facts: intake.facts, text: "" };
   const pending = slotsForPathway(intake.pathway).filter(
-    (s) => !asked.has(s.id) && !hasFact(intake.facts, s.id),
+    (s) => !asked.has(s.id) && !isSettled(intake.facts, s.id),
   );
 
   const goal = pending.find((s) => s.id === "goal") ?? null;
@@ -161,7 +172,45 @@ export function coreComplete(intake: Pick<Intake, "pathway" | "facts">): boolean
 const NON_ANSWERS = [
   "idk", "i don't know", "i dont know", "not sure", "no idea", "dunno",
   "can't remember", "cant remember", "don't remember", "dont remember", "unsure",
+  "no comment", "pass", "skip", "n/a", "?", "??",
 ];
+
+/**
+ * A bare "no" is an answer, and a clinically useful one — "No, it doesn't
+ * bleed" is a patient-stated negative the physician can rely on. Only the
+ * *absence* of knowledge counts as a non-answer.
+ */
+const STATED_ANSWER = /^(no|nope|none|nothing|never|nah|yes|yeah|yep|yup|correct|right)\b/i;
+
+/** "No idea" opens with "no" but is the opposite of a stated negative. */
+const NON_ANSWER_PREFIX = /^(no idea|no clue|not sure|don'?t know|dont know|can'?t say|couldn'?t say)\b/i;
+
+/**
+ * True when an answer carries no information at all — "not sure", "dunno", "".
+ *
+ * This matters more than it looks. A non-answer stored as a fact becomes a
+ * brief row reading "Symptoms: Not sure" and an HPI line reading "Symptoms: Not
+ * sure (patient unsure)". Both are noise dressed as content. A non-answer
+ * belongs in "clarify in visit" and nowhere else.
+ */
+export function isNonAnswer(text: string): boolean {
+  const t = text.toLowerCase().trim().replace(/[.!]+$/, "");
+  if (t.length === 0) return true;
+  if (NON_ANSWER_PREFIX.test(t)) return true;
+  if (STATED_ANSWER.test(t)) return false;
+  if (NON_ANSWERS.includes(t)) return true;
+
+  // Beyond the exact phrases, only text that *contains* a non-answer gets
+  // scrutinised. "Breakouts" is one word and a perfectly good answer; "I'm not
+  // sure really" is four and is not.
+  const carriesNonAnswer = NON_ANSWERS.some((n) => n.length > 3 && t.includes(n));
+  if (!carriesNonAnswer) return false;
+
+  let rest = t;
+  for (const n of NON_ANSWERS) rest = rest.split(n).join(" ");
+  rest = rest.replace(/\b(i|really|honestly|sorry|um|uh|well|maybe|it|is|the|a|an|to|of|about|so|just|but|and|or|that|this|my|too|either)\b/g, " ");
+  return rest.replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean).length < 2;
+}
 
 const HEDGES = ["i think", "maybe", "around", "about", "roughly", "probably", "sometime", "or so", "-ish", "guess"];
 
@@ -171,14 +220,32 @@ const HEDGES = ["i think", "maybe", "around", "about", "roughly", "probably", "s
  */
 export function classifyCertainty(text: string): Certainty {
   const t = text.toLowerCase().trim();
-  if (t.length === 0) return "unclear";
-  if (NON_ANSWERS.some((n) => t.includes(n))) return "unclear";
-  if (HEDGES.some((h) => t.includes(h))) return "approximate";
+  // Reuse the non-answer test rather than substring-matching short tokens.
+  // Matching "?" anywhere marked "Can it come back?" as unclear, which turned a
+  // patient's clearest statement — their own question — into noise.
+  if (isNonAnswer(text)) return "unclear";
+  if (HEDGES.some((h) => new RegExp(`\\b${h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(t))) {
+    return "approximate";
+  }
   return "stated";
 }
 
 export function isEmptyAnswer(text: string): boolean {
   return text.trim().length === 0;
+}
+
+/** Filler patients open with. Stripping it makes the headline readable. */
+const OPENING_FILLER =
+  /^(?:ok(?:ay)?|so|well|hi|hello|um+|uh+|erm|basically|right|yeah|yes|hey)\b[,\s]*/i;
+
+export function stripFiller(text: string): string {
+  let t = text.trim();
+  for (let i = 0; i < 3; i += 1) {
+    const next = t.replace(OPENING_FILLER, "").trimStart();
+    if (next === t) break;
+    t = next;
+  }
+  return t;
 }
 
 /**
@@ -188,15 +255,24 @@ export function isEmptyAnswer(text: string): boolean {
  * It never invents content. The value it stores is a tidied version of what the
  * patient typed, attributed to the slot the question targeted.
  */
+/** Rendered in briefs and notes, so it has to stay readable. */
+export const MAX_FACT_VALUE = 400;
+/** Kept for provenance; long enough for a real answer, short enough to store. */
+export const MAX_VERBATIM = 2000;
+
 export function extractDeterministic(slot: Slot, answer: string, at: string): Fact[] {
   const trimmed = answer.trim();
-  if (!trimmed) return [];
+  // An answer that says nothing is recorded as "asked, unresolved" rather than
+  // as a fact whose content is the word "unsure".
+  if (!trimmed || isNonAnswer(trimmed)) return [];
   const certainty = classifyCertainty(trimmed);
   return [
     {
       slot: slot.id,
-      value: tidy(trimmed),
-      verbatim: trimmed,
+      // Bounded for the same reason the model path is: a 3,000-character
+      // answer must not become a 3,000-character row in a physician's brief.
+      value: truncate(tidy(trimmed), MAX_FACT_VALUE),
+      verbatim: trimmed.slice(0, MAX_VERBATIM),
       certainty,
       source: "patient",
       at,
@@ -212,31 +288,123 @@ export function tidy(text: string): string {
 }
 
 /**
- * Questions the physician should raise in the room: slots we asked about but
- * could not resolve, plus anything the patient told us they want to ask.
+ * Slots a dermatologist would actually chase in the room if the intake missed
+ * them. Everything else, missing, is not worth a line of their attention.
  */
-export function computeOpenQuestions(intake: Pick<Intake, "pathway" | "facts" | "askedSlots">): string[] {
-  const out: string[] = [];
+const HIGH_VALUE: Record<Pathway, string[]> = {
+  rash: ["timeline", "symptoms", "treatments", "location"],
+  lesion: ["lesion_timeline", "lesion_symptoms", "location", "sun_history"],
+  acne: ["acne_treatments", "timeline", "acne_distribution"],
+  hair_loss: ["hair_pattern", "timeline", "hair_stressors", "hair_scalp"],
+  general: ["timeline", "symptoms", "location", "treatments"],
+};
+
+/** A treatment the patient could not name is a question worth 20 seconds. */
+const VAGUE_TREATMENT =
+  /\b(some ?cream|a cream|stuff from|something (?:my|the) (?:doctor|gp|dermatologist)|don'?t remember (?:which|the name|what)|can'?t remember (?:which|the name|what)|an old tube|some kind of|a prescription (?:from|my)|drugstore stuff|over the counter stuff)\b/i;
+
+const RESPONSE_LANGUAGE =
+  /\b(help(?:ed|s|ing)?|work(?:ed|s|ing)?|better|worse|no (?:change|difference|effect)|didn'?t|did not|nothing|improved?|cleared|made it|stopped|irritat)/i;
+
+const TREATMENT_SLOTS = ["treatments", "acne_treatments"];
+
+export interface ClarifyItem {
+  text: string;
+  /** Higher sorts first. Internal only. */
+  score: number;
+}
+
+const MAX_CLARIFY = 4;
+
+/**
+ * "Clarify in visit" is the section a dermatologist reads last and trusts most,
+ * so it has to be short and every line has to be worth asking.
+ *
+ * It is not a list of empty fields. It surfaces four kinds of thing: a question
+ * the patient asked, a high-value answer that is missing or unresolved, a
+ * timeline the patient could only approximate, and a treatment they named but
+ * could not pin down. Everything else is dropped.
+ */
+export function computeOpenQuestions(
+  intake: Pick<Intake, "pathway" | "facts" | "askedSlots"> & { concernCount?: number },
+): string[] {
+  const items: ClarifyItem[] = [];
+  const highValue = HIGH_VALUE[intake.pathway];
+  const factsFor = (slot: string) => intake.facts.filter((f) => f.slot === slot);
+
+  if ((intake.concernCount ?? 1) > 1) {
+    items.push({
+      score: 100,
+      text: `Patient raised ${intake.concernCount} separate concerns in one visit — confirm which to prioritise.`,
+    });
+  }
+
   for (const slotId of intake.askedSlots) {
     const slot = findSlot(intake.pathway, slotId);
     if (!slot) continue;
-    const facts = intake.facts.filter((f) => f.slot === slotId);
+    const facts = factsFor(slotId);
+    const isHigh = highValue.includes(slotId);
+
     if (facts.length === 0) {
-      out.push(`${slot.briefLabel} — patient skipped this question.`);
+      // Asked and not answered. Only worth a line if it mattered.
+      if (isHigh) {
+        items.push({ score: 80, text: `${slot.briefLabel} — asked, but the patient did not answer.` });
+      }
       continue;
     }
-    if (facts.some((f) => f.certainty === "unclear")) {
-      out.push(`${slot.briefLabel} — patient was unsure ("${truncate(facts[0].verbatim, 80)}").`);
-    } else if (facts.some((f) => f.certainty === "approximate")) {
-      out.push(`${slot.briefLabel} — approximate only ("${truncate(facts[0].verbatim, 80)}").`);
+
+    const isTimeline = slotId === "timeline" || slotId === "lesion_timeline";
+    if (isTimeline && facts.some((f) => f.certainty === "approximate")) {
+      const hedged = facts.find((f) => f.certainty === "approximate")!;
+      items.push({
+        score: 70,
+        text: `Timing is the patient's estimate only — "${timingFragment(hedged.verbatim)}".`,
+      });
+    }
+
+    if (TREATMENT_SLOTS.includes(slotId)) {
+      const text = facts.map((f) => f.verbatim).join(" ");
+      if (VAGUE_TREATMENT.test(text)) {
+        items.push({ score: 65, text: `Patient could not name what they used — "${truncate(text, 70)}".` });
+      } else if (!RESPONSE_LANGUAGE.test(text)) {
+        items.push({ score: 60, text: `${slot.briefLabel} — what they tried is recorded, the response is not.` });
+      }
     }
   }
-  const unasked = slotsForPathway(intake.pathway)
-    .filter((s) => s.tier === "core" && !intake.askedSlots.includes(s.id));
-  for (const slot of unasked) {
-    out.push(`${slot.briefLabel} — not covered before the question budget ran out.`);
+
+  // Core slots the budget never reached, high value only.
+  for (const slot of slotsForPathway(intake.pathway)) {
+    if (slot.tier !== "core") continue;
+    if (intake.askedSlots.includes(slot.id)) continue;
+    if (factsFor(slot.id).length > 0) continue;
+    if (!highValue.includes(slot.id)) continue;
+    items.push({ score: 50, text: `${slot.briefLabel} — not covered before the interview ended.` });
   }
-  return out;
+
+  // A patient who answered almost nothing needs one honest line, not eight.
+  const answered = intake.askedSlots.filter((s) => factsFor(s).length > 0).length;
+  if (intake.askedSlots.length >= 3 && answered <= 1) {
+    return ["Patient started the intake but answered very little — the history will need to be taken in the room."];
+  }
+
+  const seen = new Set<string>();
+  return items
+    .sort((a, b) => b.score - a.score)
+    .filter((i) => (seen.has(i.text) ? false : (seen.add(i.text), true)))
+    .slice(0, MAX_CLARIFY)
+    .map((i) => i.text);
+}
+
+/**
+ * The part of an answer that carries the timing, so a clarify line quotes
+ * "maybe 4 months" rather than three hundred characters of opening statement.
+ */
+const HEDGED_TIMING =
+  /\b(?:i think|maybe|about|around|roughly|probably|possibly)\b[^.,;!?/]{0,25}|\bsince\s+[a-z]+\b/i;
+
+export function timingFragment(verbatim: string): string {
+  const m = verbatim.match(HEDGED_TIMING);
+  return truncate((m ? m[0] : verbatim).trim(), 70);
 }
 
 export function truncate(text: string, max: number): string {

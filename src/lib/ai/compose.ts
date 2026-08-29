@@ -1,6 +1,6 @@
-import type { Fact, Intake, IntakeBundle } from "@/lib/domain/types";
+import type { Fact, Intake, IntakeBundle, Pathway } from "@/lib/domain/types";
 import { PATHWAY_LABELS } from "@/lib/domain/types";
-import { findSlot, truncate } from "@/lib/interview/engine";
+import { stripFiller, truncate } from "@/lib/interview/engine";
 import { guardAll, type GuardViolation } from "./guard";
 
 /**
@@ -23,71 +23,246 @@ export interface BriefItem {
   verbatim: string;
   certainty: Fact["certainty"];
   slot: string;
+  /** Volunteered in a longer answer rather than given to a direct question. */
+  harvested: boolean;
 }
 
 export const sourcesFrom = (facts: Fact[]): string[] =>
   facts.flatMap((f) => [f.verbatim, f.value]);
 
+/**
+ * A bare negative is real information — we asked, and the patient said no — but
+ * rendered raw it produces brief rows reading "Relevant context: Nothing".
+ * Normalising it keeps the meaning and makes it read like a record.
+ */
+const BARE_NEGATIVE = /^(no|nope|none|nothing|nothing really|not really|nah|no thanks|n\/a)[.!]?$/i;
+
+const NEGATIVE_PHRASING: Record<string, string> = {
+  treatments: "Nothing tried",
+  acne_treatments: "Nothing tried",
+  context: "None reported",
+  atopy: "None reported",
+  lesion_others: "No other spots raised",
+  sun_history: "None reported",
+  symptoms: "No symptoms reported",
+  lesion_symptoms: "No symptoms reported",
+  hair_scalp: "No scalp symptoms reported",
+  triggers: "None identified by the patient",
+  exposures: "None identified by the patient",
+  acne_pattern: "No pattern identified by the patient",
+  hair_stressors: "None identified by the patient",
+  hair_care: "Nothing unusual reported",
+};
+
+export function renderFactValue(fact: Fact): string {
+  const v = fact.value.trim();
+  if (BARE_NEGATIVE.test(v)) return NEGATIVE_PHRASING[fact.slot] ?? "None reported";
+  return v;
+}
+
+/** Two values say the same thing when one is contained in the other. */
+function overlaps(a: string, b: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const x = norm(a);
+  const y = norm(b);
+  if (!x || !y) return false;
+  return x.includes(y) || y.includes(x);
+}
+
 function itemsFor(intake: Intake, slotIds: string[]): BriefItem[] {
   return intake.facts
     .filter((f) => slotIds.includes(f.slot) && f.value.trim())
-    .map((f) => ({ text: f.value, verbatim: f.verbatim, certainty: f.certainty, slot: f.slot }));
+    .map((f) => ({
+      // A patient who tells their whole story in the opening answer should get
+      // a readable concern line, not a paragraph. The full text is still on the
+      // item as `verbatim`, so nothing is lost — it moves behind "show the
+      // patient's own words", which is where a wall of text belongs.
+      text: f.slot === "concern" ? cleanConcern(f.value) : renderFactValue(f),
+      verbatim: f.verbatim,
+      certainty: f.certainty,
+      slot: f.slot,
+      harvested: f.harvested === true,
+    }));
 }
+
+/**
+ * Section layout, per pathway.
+ *
+ * Each pathway gets its own map so no two slots ever share a label. Sharing was
+ * producing three consecutive "Relevant context" rows on a lesion brief, two of
+ * which were bare negatives, which is exactly the noise this section is meant
+ * to be free of.
+ */
+const SECTIONS: Record<Pathway, { label: string; slots: string[] }[]> = {
+  rash: [
+    { label: "Primary concern", slots: ["concern"] },
+    { label: "Location", slots: ["location"] },
+    { label: "Timeline", slots: ["timeline"] },
+    { label: "Symptoms", slots: ["symptoms"] },
+    { label: "Triggers", slots: ["triggers"] },
+    { label: "New exposures", slots: ["exposures"] },
+    { label: "Tried so far", slots: ["treatments"] },
+    { label: "Atopic history", slots: ["atopy"] },
+    { label: "Medications, allergies, history", slots: ["context"] },
+    { label: "Patient goal", slots: ["goal"] },
+  ],
+  lesion: [
+    { label: "Primary concern", slots: ["concern"] },
+    { label: "Location", slots: ["location"] },
+    { label: "Timeline and change", slots: ["lesion_timeline"] },
+    { label: "Symptoms", slots: ["lesion_symptoms"] },
+    { label: "Sun and skin-cancer history", slots: ["sun_history"] },
+    { label: "Other spots", slots: ["lesion_others"] },
+    { label: "Tried so far", slots: ["treatments"] },
+    { label: "Medications, allergies, history", slots: ["context"] },
+    { label: "Patient goal", slots: ["goal"] },
+  ],
+  acne: [
+    { label: "Primary concern", slots: ["concern"] },
+    { label: "Distribution", slots: ["acne_distribution"] },
+    { label: "Timeline", slots: ["timeline"] },
+    { label: "Tried so far", slots: ["acne_treatments"] },
+    { label: "Flare pattern", slots: ["acne_pattern"] },
+    { label: "Impact", slots: ["acne_impact"] },
+    { label: "Medications, allergies, history", slots: ["context"] },
+    { label: "Patient goal", slots: ["goal"] },
+  ],
+  hair_loss: [
+    { label: "Primary concern", slots: ["concern"] },
+    { label: "Pattern", slots: ["hair_pattern"] },
+    { label: "Timeline", slots: ["timeline"] },
+    { label: "Scalp symptoms", slots: ["hair_scalp"] },
+    { label: "Preceding events", slots: ["hair_stressors"] },
+    { label: "Hair care", slots: ["hair_care"] },
+    { label: "Tried so far", slots: ["treatments"] },
+    { label: "Medications, allergies, history", slots: ["context"] },
+    { label: "Patient goal", slots: ["goal"] },
+  ],
+  general: [
+    { label: "Primary concern", slots: ["concern"] },
+    { label: "Location", slots: ["location"] },
+    { label: "Timeline", slots: ["timeline"] },
+    { label: "Symptoms", slots: ["symptoms"] },
+    { label: "Triggers", slots: ["triggers"] },
+    { label: "Tried so far", slots: ["treatments"] },
+    { label: "Medications, allergies, history", slots: ["context"] },
+    { label: "Patient goal", slots: ["goal"] },
+  ],
+};
 
 /**
  * The brief is assembled from whichever slots the pathway actually filled.
  * Empty sections are dropped rather than padded — a section that says "none
- * reported" would be an invented negative.
+ * reported" when nobody asked would be an invented negative.
  */
 export function buildBrief(intake: Intake): BriefSection[] {
-  const groups: { label: string; slots: string[] }[] = [
-    { label: "Primary concern", slots: ["concern"] },
-    { label: "Location", slots: ["location", "acne_distribution", "hair_pattern"] },
-    { label: "Timeline", slots: ["timeline", "lesion_timeline"] },
-    {
-      label: "Symptoms",
-      slots: ["symptoms", "lesion_symptoms", "hair_scalp"],
-    },
-    {
-      label: "Triggers and exposures",
-      slots: ["triggers", "exposures", "acne_pattern", "hair_stressors", "hair_care"],
-    },
-    { label: "Tried so far", slots: ["treatments", "acne_treatments"] },
-    { label: "Impact on daily life", slots: ["acne_impact"] },
-    {
-      label: "Relevant context",
-      slots: ["context", "atopy", "sun_history", "lesion_others"],
-    },
-    { label: "Patient goal", slots: ["goal"] },
-  ];
-
-  return groups
+  return SECTIONS[intake.pathway]
     .map((g) => ({ label: g.label, items: itemsFor(intake, g.slots) }))
     .filter((s) => s.items.length > 0);
 }
 
-/** One line a dermatologist can read while opening the door. */
-export function headline(intake: Intake): string {
-  const concern = intake.facts.find((f) => f.slot === "concern");
-  const timeline = intake.facts.find((f) => f.slot === "timeline" || f.slot === "lesion_timeline");
-  const base = concern ? truncate(concern.value, 130) : PATHWAY_LABELS[intake.pathway];
-  if (!timeline) return base;
-  // Skip the timeline clause when the opening answer already carried it — the
-  // headline has one job and repeating "for about a year" twice wastes it.
-  const already = /\b(year|month|week|day)s?\b/i.test(base) && /\b(year|month|week|day)s?\b/i.test(timeline.value);
-  if (already) return base;
-  return `${base} — ${truncate(timeline.value, 70)}`;
+/**
+ * High-value things the intake did not establish, named explicitly.
+ *
+ * A physician reading a brief has to be able to tell "asked, patient said no"
+ * apart from "never asked". Silence looks like a negative, and that is the
+ * quietest way a summary can mislead.
+ */
+export function notEstablished(intake: Intake): string[] {
+  const answered = new Set(
+    intake.facts.filter((f) => f.value.trim().length > 0).map((f) => f.slot),
+  );
+  return SECTIONS[intake.pathway]
+    .filter((g) => g.slots.every((sl) => !answered.has(sl)))
+    .filter((g) => g.label !== "Primary concern")
+    .map((g) => g.label);
 }
 
-const label = (intake: Intake, slotId: string) =>
-  findSlot(intake.pathway, slotId)?.briefLabel ?? slotId;
+/** First sentence, filler removed — what the concern would look like tidied. */
+const CONCERN_MAX = 120;
+
+/**
+ * The concern, reduced to something a dermatologist can read in one line.
+ *
+ * Patients often answer the opening question with three hundred unpunctuated
+ * characters. Clipping that mid-word produces a headline that looks broken and
+ * says nothing, so this cuts at a real clause boundary and only falls back to
+ * an ellipsis when there is no boundary to cut at.
+ */
+export function cleanConcern(raw: string): string {
+  const stripped = stripFiller(raw).replace(/\s+/g, " ").trim();
+  const firstSentence = stripped.split(/(?<=[.!?])\s+/)[0] ?? stripped;
+  const candidate = (firstSentence.length >= 25 ? firstSentence : stripped).replace(/[,;]\s*$/, "");
+  if (candidate.length <= CONCERN_MAX) return candidate;
+
+  // Cut at the last clause boundary that still leaves a useful line.
+  const window = candidate.slice(0, CONCERN_MAX);
+  const boundary = Math.max(
+    window.lastIndexOf(", "),
+    window.lastIndexOf("; "),
+    window.lastIndexOf(" and "),
+    window.lastIndexOf(" but "),
+  );
+  if (boundary > 45) return window.slice(0, boundary).replace(/[,;]\s*$/, "").trim();
+  return truncate(candidate, CONCERN_MAX);
+}
+
+/**
+ * One line a dermatologist can read while opening the door.
+ *
+ * The timeline is appended only when it genuinely adds something: not when the
+ * concern already carries a duration, and never when the patient was unsure,
+ * because "dark spot — honestly no idea" is a worse headline than "dark spot".
+ */
+export function headline(intake: Intake): string {
+  const concern = intake.facts.find((f) => f.slot === "concern");
+  const timeline = intake.facts.find(
+    (f) => (f.slot === "timeline" || f.slot === "lesion_timeline") && f.certainty !== "unclear",
+  );
+  const base = concern ? cleanConcern(concern.value) : PATHWAY_LABELS[intake.pathway];
+  if (!timeline) return base;
+
+  const DURATION_WORD = /\b(year|month|week|day)s?\b|\bsince\b/i;
+  if (DURATION_WORD.test(base) && DURATION_WORD.test(timeline.value)) return base;
+  if (overlaps(base, timeline.value)) return base;
+
+  const suffix = headlineTimeline(renderFactValue(timeline));
+  return suffix ? `${base} — ${suffix}` : base;
+}
+
+/**
+ * A headline suffix has to be a whole thought. Truncating a long timeline
+ * mid-word ("…darker and larger than bef…") looks broken and tells the reader
+ * nothing, so a clause that will not fit is dropped rather than clipped.
+ */
+const QUANTITY = "(?:\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|few|couple|several|many)";
+const UNIT = "(?:day|week|month|year)s?";
+const APPROX = "(?:about|around|roughly|nearly|over|almost)?";
+const DURATION_CLAUSE = new RegExp(
+  [
+    // "for years", "for about three months" — quantity optional after "for".
+    `\\bfor\\s+${APPROX}\\s*${QUANTITY}?\\s*${UNIT}\\b`,
+    // "three months", "a couple of weeks"
+    `\\b${APPROX}\\s*${QUANTITY}\\s*(?:-|\\s)?${UNIT}\\b`,
+    // "since May", "since childhood"
+    "\\bsince\\s+[a-z]+\\b",
+  ].join("|"),
+  "i",
+);
+
+export function headlineTimeline(value: string): string | null {
+  const first = (value.split(/[;.]/)[0] ?? value).trim();
+  if (first.length > 0 && first.length <= 62) return first;
+  const m = value.match(DURATION_CLAUSE);
+  return m ? m[0].trim() : null;
+}
 
 /**
  * Hedge language is carried through from the patient's certainty rating so the
  * physician can see uncertainty rather than inherit false precision.
  */
 function phrase(fact: Fact): string {
-  const v = fact.value.replace(/\s+/g, " ").trim().replace(/\.$/, "");
+  const v = renderFactValue(fact).replace(/\s+/g, " ").trim().replace(/\.$/, "");
   if (fact.certainty === "approximate") return `${v} (patient's approximation)`;
   if (fact.certainty === "unclear") return `${v} (patient unsure)`;
   return v;
@@ -96,9 +271,10 @@ function phrase(fact: Fact): string {
 /**
  * Deterministic draft HPI.
  *
- * Structure: who, what they came for, then each filled slot as an attributed
- * sentence. Nothing is added. Nothing is negated. If a slot is empty it simply
- * does not appear.
+ * A prose opening sentence a physician can read at a glance, then one
+ * attributed line per thing the patient actually said, then an explicit list of
+ * what the intake did not establish. Nothing is added, nothing is negated, and
+ * absence is stated rather than left to be misread as a negative.
  */
 export function composeHpiDeterministic(bundle: IntakeBundle): string {
   const { intake, patient } = bundle;
@@ -108,30 +284,47 @@ export function composeHpiDeterministic(bundle: IntakeBundle): string {
 
   const concern = intake.facts.find((f) => f.slot === "concern");
   if (concern) {
-    lines.push(`${who} presents for evaluation of the following, in their words: "${concern.verbatim.trim()}"`);
+    const clean = cleanConcern(concern.value);
+    if (READS_AS_SENTENCE.test(clean)) {
+      // "presents for evaluation of I think this is eczema" is not English.
+      // A first-person concern is quoted instead of being inlined.
+      lines.push(`${who} presents for a dermatology visit.`);
+      lines.push(`In their own words: "${truncate(concern.verbatim.trim(), 500)}"`);
+    } else {
+      lines.push(`${who} presents for evaluation of ${lowerFirst(clean)}.`);
+      const verbatim = concern.verbatim.trim();
+      if (!overlaps(verbatim, clean) || verbatim.length > 160) {
+        lines.push(`In their own words: "${truncate(verbatim, 500)}"`);
+      }
+    }
   } else {
     lines.push(`${who} presents for a dermatology visit.`);
   }
+  lines.push("");
 
-  const ordered = [
-    "location", "acne_distribution", "hair_pattern",
-    "timeline", "lesion_timeline",
-    "symptoms", "lesion_symptoms", "hair_scalp",
-    "triggers", "exposures", "acne_pattern", "hair_stressors", "hair_care",
-    "treatments", "acne_treatments",
-    "acne_impact", "atopy", "sun_history", "context", "lesion_others",
-  ];
-
-  for (const slotId of ordered) {
-    const facts = intake.facts.filter((f) => f.slot === slotId && f.value.trim());
-    for (const f of facts) {
-      lines.push(`${label(intake, slotId)}: ${phrase(f)}.`);
+  const rendered = new Set<string>();
+  for (const group of SECTIONS[intake.pathway]) {
+    if (group.slots.includes("concern") || group.slots.includes("goal")) continue;
+    for (const slotId of group.slots) {
+      for (const f of intake.facts.filter((x) => x.slot === slotId && x.value.trim())) {
+        const line = `${group.label}: ${phrase(f)}.`;
+        if (rendered.has(line)) continue;
+        rendered.add(line);
+        lines.push(line);
+      }
     }
   }
 
   const goal = intake.facts.find((f) => f.slot === "goal");
   if (goal) {
+    lines.push("");
     lines.push(`Patient's stated goal for the visit: ${phrase(goal)}.`);
+  }
+
+  const missing = notEstablished(intake);
+  if (missing.length > 0) {
+    lines.push("");
+    lines.push(`Not established during intake: ${missing.join("; ")}.`);
   }
 
   if (intake.photos.length > 0) {
@@ -140,7 +333,18 @@ export function composeHpiDeterministic(bundle: IntakeBundle): string {
     );
   }
 
-  return lines.join("\n");
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** A concern that is already a clause with a subject cannot be inlined. */
+const READS_AS_SENTENCE =
+  /^(i|we|my|there(?:'s| is| are)|it(?:'s| is)|he|she|they|the doctor|patient)\b/i;
+
+function lowerFirst(s: string): string {
+  if (!s) return s;
+  // Leave acronyms and proper nouns alone.
+  if (s.length > 1 && s[1] === s[1].toUpperCase() && /[A-Z]/.test(s[1])) return s;
+  return s.charAt(0).toLowerCase() + s.slice(1);
 }
 
 /**

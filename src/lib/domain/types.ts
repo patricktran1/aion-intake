@@ -39,6 +39,19 @@ export const factSchema = z.object({
   /** Always "patient" today. Exists so the UI can prove provenance. */
   source: z.literal("patient"),
   at: z.string(),
+  /**
+   * True when this was read out of an answer the patient volunteered rather
+   * than given in reply to a direct question. The physician sees the
+   * distinction; it is the difference between "I asked and she said" and
+   * "she mentioned in passing".
+   */
+  harvested: z.boolean().optional(),
+  /**
+   * True when a multi-part question is only half answered — a duration with no
+   * sense of whether it is getting better, or a treatment with no response.
+   * The interview still asks, but only for the missing half.
+   */
+  partial: z.boolean().optional(),
 });
 export type Fact = z.infer<typeof factSchema>;
 
@@ -114,6 +127,10 @@ export const intakeSchema = z.object({
   patientQuestions: z.array(z.string()),
   askedSlots: z.array(z.string()),
   questionCount: z.number(),
+  /** How many distinct problems the patient raised. 1 for almost everyone. */
+  concernCount: z.number().default(1),
+  /** Consecutive unanswered questions. Used to stop grinding a silent patient. */
+  consecutiveSkips: z.number().default(0),
   startedAt: z.string().optional(),
   submittedAt: z.string().optional(),
   lastActivityAt: z.string(),

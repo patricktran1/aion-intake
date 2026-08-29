@@ -13,6 +13,13 @@ Page views are not among them.
 Target: median under 300 seconds, completion rate above 70%. A completion rate
 that falls as question count rises means the budget is too generous.
 
+`intake_facts_harvested` is the leading indicator here: it counts how often the
+interview skipped a question because the patient had already answered it. If
+that number is low, patients are giving short opening answers and the opener may
+need rewording. `intake_ended_early` counts disengagement — a rise means the
+interview is losing people, and `slot` on the last `intake_question_answered`
+says where.
+
 **2. Can a dermatologist understand the story in under thirty seconds?**
 Not directly measurable in software. The observable proxy is
 `clinician_hpi_copied` — a physician who copies the HPI has decided the brief is
@@ -36,6 +43,8 @@ subsequent note generation is the worrying pattern.
 | `intake_opened` | Patient loads the link |
 | `intake_started` | Patient taps Start |
 | `intake_question_answered` | Each turn, with `slot`, `input_mode`, `empty`, `certainty` |
+| `intake_facts_harvested` | The interview read facts out of a longer answer and skipped those questions |
+| `intake_ended_early` | The interview stopped because the patient had disengaged |
 | `intake_photo_uploaded` / `intake_photo_rejected` | Photo step |
 | `intake_review_edited` | Patient corrects a line on the review screen |
 | `intake_submitted` | With `question_count`, `photo_count`, `voice_turns`, `duration_seconds`, `ai_cost_usd` |
@@ -67,7 +76,9 @@ ai_mode, model
 returned by the API, not from an estimate. It answers the only question that
 decides whether this can stay free: what does one completed intake cost.
 
-Expected: about $0.02 with a model configured, $0.00 without. See `AI.md`.
+Expected: about **$0.012** with a model configured, $0.00 without — measured
+across the scenario library by `scripts/cost.ts`, not estimated. See `AI.md` for
+the breakdown and for why prompt caching does not apply at this prompt size.
 
 `ai_fallbacks` against `ai_calls` is the other cost-adjacent number — a rising
 fallback rate means the model is being paid for and then discarded.

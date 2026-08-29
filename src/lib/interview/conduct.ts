@@ -97,8 +97,14 @@ export function parseTurn(
   return { facts, patientQuestions, nextQuestion: nq || null };
 }
 
-/** Last few turns only. Resending the whole transcript every turn is the cost trap. */
-function recentTranscript(intake: Intake, turns = 3): string {
+/**
+ * The previous turn only.
+ *
+ * Resending the whole transcript every turn is the classic cost trap, and it
+ * buys nothing here: the engine holds every fact and decides every question, so
+ * the model needs just enough context to make its phrasing flow.
+ */
+function recentTranscript(intake: Intake, turns = 1): string {
   return intake.messages
     .slice(-turns * 2)
     .map((m) => `${m.role === "assistant" ? "AION" : "Patient"}: ${m.text}`)

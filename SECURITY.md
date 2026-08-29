@@ -29,6 +29,10 @@ real patient uses it.
 - Maximum three per intake, 6 MB, minimum 400px on the short edge.
 - Photos are never sent to any model, and no image analysis of any kind is
   performed.
+- Uploads are **raster only** (JPEG, PNG, WebP). The endpoint previously accepted
+  any `data:image/*`, which included attacker-supplied SVG — markup, not an
+  image. The seeded demo placeholders are SVG, but they come from this
+  repository rather than from a request.
 - Quality checks are advisory and non-blocking. A patient is never prevented from
   submitting a photo they want the dermatologist to see.
 
@@ -42,8 +46,21 @@ real patient uses it.
   are truncated and non-primitives are discarded. This is enforced by test.
 - Only ids, counts, durations, enums, and booleans are ever recorded. Patient
   free text is never logged.
+- Structured logging to stdout can be turned off with `AION_LOG_ANALYTICS=0`.
 - The browser can report only three specific events, on an allowlist, with no
   free text (`/api/analytics`).
+
+### Rate limiting and abuse
+
+- A per-process token bucket (`src/lib/ratelimit.ts`) covers intake writes,
+  photo uploads and demo reset, plus a same-origin check on reset so a stranger
+  cannot wipe a demo mid-conversation.
+- Patient writes key on the **intake token**, not the client address. Address
+  keying would throttle every patient in one waiting room behind a single NAT —
+  a defect found by driving the product across breakpoints, not by reading it.
+- It is honest about what it is: a serverless deployment runs several instances
+  and each keeps its own counters. It makes casual abuse inconvenient; it is not
+  a defence. See `PILOT_READINESS.md`.
 
 ### Access control
 
@@ -65,6 +82,10 @@ real patient uses it.
 - With a key, patient answers are sent to the Anthropic API for extraction and
   drafting. Nothing else is: no names, no dates of birth, no photographs, no
   practice identifiers.
+- Provider error messages never reach analytics verbatim. `errorReason()`
+  reduces them to a fixed vocabulary (`timeout`, `rate_limit`, `auth`,
+  `network`, `overloaded`, `provider_error`, `other`) because SDK messages carry
+  URLs, request ids and fragments of configuration.
 - Prompts are centralised and versioned in `src/lib/ai/prompts.ts`, so exactly
   what is transmitted is auditable in one file.
 
@@ -80,6 +101,9 @@ real patient uses it.
   the store to its seeded state.
 - There is no patient-initiated deletion, because there is no durable storage to
   delete from. That changes the moment a database is introduced.
+
+For the route from here to a real pilot, with the "must have" and "can wait"
+lists separated, see `PILOT_READINESS.md`.
 
 ## Required before any real patient data
 
@@ -122,7 +146,7 @@ Stated plainly rather than buried.
   additional check.
 - With `CLINICIAN_ACCESS_CODE` unset, the clinician view is public.
 - There is no audit trail.
-- There is no rate limiting.
+- Rate limiting is per-process, so it does not hold across instances.
 - The in-memory store means a serverless deployment can serve a submitted intake
   from one instance and a stale view from another. Acceptable for a synthetic
   demo, disqualifying for anything real. The seeded demo patients are always

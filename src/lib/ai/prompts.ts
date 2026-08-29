@@ -4,7 +4,7 @@
  * can be traced to a change in wording.
  */
 
-export const PROMPT_VERSION = "2026-08-29.1";
+export const PROMPT_VERSION = "2026-08-29.2";
 
 export const SYSTEM_INTERVIEWER = `You are the interview surface of AION Intake, a pre-visit intake tool for a dermatology practice.
 
@@ -30,36 +30,31 @@ You will be given the exact next question the interview engine has selected. Re-
  */
 export const TURN_TOOL = {
   name: "record_turn",
-  description:
-    "Record the structured facts contained in the patient's answer and produce the next question.",
+  description: "Record what the patient's answer contains, and produce the next question.",
   input_schema: {
     type: "object" as const,
     properties: {
       facts: {
         type: "array",
         description:
-          "Facts the patient actually stated in this answer. Extract nothing that was not said. Do not record negatives the patient did not state. If the answer is empty or a non-answer, return an empty array.",
+          "What the patient actually stated. Extract nothing they did not say. Never record a negative they did not state. Empty if the answer is a non-answer.",
         items: {
           type: "object",
           properties: {
-            slot: {
-              type: "string",
-              description: "One of the slot ids supplied in the request.",
-            },
+            slot: { type: "string", description: "One of the slot ids in the request." },
             value: {
               type: "string",
-              description:
-                "A tidy restatement of what the patient said for this slot. Same meaning, same hedges. Max 200 characters.",
+              description: "Tidy restatement. Same meaning, same hedges. Max 200 chars.",
             },
             verbatim: {
               type: "string",
-              description: "The exact substring of the patient's answer this came from.",
+              description: "The exact substring of the answer this came from.",
             },
             certainty: {
               type: "string",
               enum: ["stated", "approximate", "unclear"],
               description:
-                "'stated' if said plainly; 'approximate' if hedged (I think, around, maybe); 'unclear' if they did not really answer.",
+                "stated = said plainly; approximate = hedged (I think, around, maybe); unclear = did not really answer.",
             },
           },
           required: ["slot", "value", "verbatim", "certainty"],
@@ -67,14 +62,13 @@ export const TURN_TOOL = {
       },
       patient_questions: {
         type: "array",
-        description:
-          "Questions the patient said they want to ask the dermatologist. Their words, lightly tidied. Empty if none.",
+        description: "Questions the patient said they want to ask the dermatologist. Their words.",
         items: { type: "string" },
       },
       next_question: {
         type: "string",
         description:
-          "The next question, re-voiced naturally from the supplied engine question. Empty string if the request said the interview is finished.",
+          "The supplied engine question, re-voiced to flow from the answer. Empty if the request says the interview is finished.",
       },
     },
     required: ["facts", "patient_questions", "next_question"],
@@ -89,25 +83,22 @@ export function turnUserPrompt(args: {
   nextQuestion: string | null;
   recentTranscript: string;
 }): string {
-  return `CONVERSATION SO FAR (most recent last, trimmed)
-${args.recentTranscript || "(this is the first answer)"}
-
-THE QUESTION THEY WERE JUST ASKED
+  // Only the immediately preceding turn is sent. The interview's state lives on
+  // the server, so the transcript is here for conversational flow alone — and a
+  // longer one is the single largest avoidable cost in the product.
+  return `${args.recentTranscript ? `PREVIOUS TURN\n${args.recentTranscript}\n\n` : ""}JUST ASKED (slot "${args.askedSlot}", facets: ${args.facets.join(", ")})
 "${args.askedQuestion}"
-It was targeting slot id "${args.askedSlot}" (facets: ${args.facets.join(", ")}).
 
 THEIR ANSWER
 """
 ${args.answer}
 """
 
-Extract only what they said, attributed to slot id "${args.askedSlot}".
-
+Extract only what they said, attributed to slot "${args.askedSlot}".
 ${
   args.nextQuestion
-    ? `NEXT QUESTION SELECTED BY THE ENGINE (re-voice this, do not change its subject):
-"${args.nextQuestion}"`
-    : `The interview is finished. Return an empty string for next_question.`
+    ? `\nNEXT QUESTION (re-voice, do not change its subject):\n"${args.nextQuestion}"`
+    : `\nThe interview is finished. Return an empty next_question.`
 }`;
 }
 

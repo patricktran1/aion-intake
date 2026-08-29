@@ -39,7 +39,7 @@ cp .env.example .env.local   # then set ANTHROPIC_API_KEY if you want model mode
 | Variable | Effect |
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Unset: deterministic mode. Set: model-backed extraction and drafting. |
-| `AION_MODEL` | Model id. Defaults to `claude-haiku-4-5-20251001`. |
+| `AION_MODEL` | Model id. Defaults to `claude-haiku-4-5`. |
 | `CLINICIAN_ACCESS_CODE` | Unset: clinician view is open. Set: shared passphrase required. |
 
 ## Walk the demo
@@ -69,6 +69,18 @@ npm run verify     # typecheck, lint, tests, production build
 ```
 
 Individually: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
+
+Three scripts do the work that tests cannot:
+
+```bash
+npx tsx scripts/simulate.ts          # every scenario, with its resulting brief
+npx tsx scripts/simulate.ts lesion   # full detail for matching scenarios
+npx tsx scripts/cost.ts              # measured AI cost per completed intake
+node scripts/qa.mjs --full           # browser QA across ten breakpoints
+```
+
+`scripts/qa.mjs` needs the app running (`npm run build && npm start`, or point
+`BASE` at any deployment) and writes screenshots to `$SHOTS`.
 
 ## Deploy it
 
@@ -113,7 +125,11 @@ src/
     store/                 the eight functions a real database would implement
     analytics/             ring buffer, PHI-stripping, /api/metrics
     demo/seed.ts           synthetic patients
-tests/                     108 tests
+tests/                     scenario library, fidelity, failure injection
+scripts/
+  simulate.ts              run every scenario, print the resulting briefs
+  qa.mjs                   drive the product across ten breakpoints
+  cost.ts                  measure AI cost per intake
 ```
 
 ## The documents
@@ -125,6 +141,9 @@ tests/                     108 tests
 | `AI.md` | Where AI is used, the hallucination controls, the cost model |
 | `SECURITY.md` | What is true today, and what must be true before real PHI |
 | `METRICS.md` | The four numbers that decide whether the wedge is real |
+| `DEMO.md` | How to run the two-minute and five-minute demos |
+| `PILOT_READINESS.md` | What must be true before a single real patient |
+| `DEFERRED.md` | Good ideas deliberately not built, and why |
 
 ## Safety boundaries
 

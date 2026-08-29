@@ -83,7 +83,9 @@ const URGENT_SIGNALS = [
   "throat closing", "swelling of my face", "face is swelling", "lips are swelling",
   "anaphylaxis", "chest pain", "passing out", "fainted", "high fever",
   "skin is peeling off", "blisters in my mouth", "sepsis",
-  "suicidal", "kill myself", "hurt myself",
+  "suicidal", "kill myself", "hurt myself", "hurting myself", "harm myself",
+  "harming myself", "end my life", "end it all", "don't want to be here",
+  "dont want to be here", "spreading rapidly", "spreading very fast",
 ];
 
 export function detectUrgent(text: string): boolean {
@@ -233,7 +235,12 @@ export function isNonAnswer(text: string): boolean {
   return rest.replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean).length < 2;
 }
 
-const HEDGES = ["i think", "maybe", "around", "about", "roughly", "probably", "sometime", "or so", "-ish", "guess"];
+const HEDGES = [
+  "i think", "maybe", "around", "about", "roughly", "probably", "sometime",
+  "or so", "-ish", "guess",
+  // Vague quantities are approximations, even stated confidently.
+  "a few", "couple", "several", "some months", "some weeks", "some years",
+];
 
 /**
  * Certainty is decided from the patient's own words, never from how confident
@@ -434,10 +441,15 @@ export function computeOpenQuestions(
     items.push({ score: 50, text: `${slot.briefLabel} — not covered before the interview ended.` });
   }
 
-  // A patient who answered almost nothing needs one honest line, not eight.
+  // A patient who answered almost nothing needs one honest line, not eight —
+  // but the "several concerns" flag is the single most useful thing here, so it
+  // survives even a sparse interview.
   const answered = intake.askedSlots.filter((s) => factsFor(s).length > 0).length;
   if (intake.askedSlots.length >= 3 && answered <= 1) {
-    return ["Patient started the intake but answered very little — the history will need to be taken in the room."];
+    const line = "Patient started the intake but answered very little — the history will need to be taken in the room.";
+    return (intake.concernCount ?? 1) > 1
+      ? [`Patient raised ${intake.concernCount} separate concerns in one visit — confirm which to prioritise.`, line]
+      : [line];
   }
 
   const seen = new Set<string>();

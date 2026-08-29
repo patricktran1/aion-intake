@@ -21,6 +21,8 @@ export interface HarvestSignal {
   slots: string[];
   test: RegExp;
   label: string;
+  /** If the clause matches this, the signal does NOT fire. */
+  reject?: RegExp;
   /**
    * How to reduce the matched clause to this signal's own words. "span" keeps
    * the match and a word of lead-in; "list" collects every match in the clause.
@@ -52,6 +54,15 @@ const TREATMENT_TERMS =
 const TRIED =
   /\b(i(?:'ve)?\s+(?:tried|used|been using|been on|take|took|am using|applied)|prescribed|gave me|put me on|currently (?:using|on))\b/i;
 
+/**
+ * An explicit "nothing tried" is worth harvesting; a bare "the stuff I've
+ * tried" is not — it names no treatment, so harvesting it as a settled fact
+ * silently suppresses the treatment question and the physician never learns
+ * the patient could not name what they used.
+ */
+const NO_TREATMENT =
+  /\b(haven'?t tried anything|hasn'?t tried anything|not tried anything|haven'?t tried anything yet|no treatment|never tried anything|tried nothing|nothing (?:for it|has helped|helped|worked)|haven'?t used anything)\b/i;
+
 const SYMPTOM_TERMS =
   /\b(itch(?:y|es|ing)?|pain(?:ful)?|sore|burn(?:s|ing)?|sting(?:s|ing)?|tender|bleed(?:s|ing)?|scab(?:s|bing|bed)?|crust(?:s|ing|y)?|flak(?:y|ing|es)|scal(?:y|ing|es)|dry|crack(?:s|ing|ed)|ooz(?:e|ing)|weep(?:s|ing)|swollen|swelling|blister(?:s|ing)?|numb|tingl(?:e|ing))\b/i;
 
@@ -64,6 +75,14 @@ const FAMILY_STATEMENT =
   /\b(my (?:mum|mom|mother|dad|father|brother|sister|son|daughter|aunt|uncle|grandmother|grandfather|parents?|family)\b|runs in (?:my|the) family|family history)\b/i;
 
 const ATOPY_TERMS = /\b(eczema|asthma|hay ?fever|atopic|allergies)\b/i;
+/**
+ * A first-person present-tense belief about a diagnosis ("I know this is
+ * melanoma") is the patient's opinion, not a history. It must not be filed
+ * under "sun and skin-cancer history", where it would read as established.
+ */
+const SELF_DIAGNOSIS =
+  /\bi\s+(?:know|think|believe|reckon|am sure|'m sure|was told|read|googled)\b|\b(?:looks like|it'?s definitely|pretty sure)\b/i;
+
 const SUN_TERMS =
   /\b(sun ?burn(?:s|ed|t)?|tanning|sun ?bed|outdoors?|roof(?:ing|er)|sail|beach|melanoma|skin cancer|basal cell|squamous)\b/i;
 const HAIRCARE_TERMS =
@@ -79,12 +98,15 @@ const EXPOSURE_TERMS =
  * the pathway actually in play.
  */
 const SIGNALS: HarvestSignal[] = [
-  { slots: ["treatments", "acne_treatments"], test: TRIED, label: "treatment" },
+  // A named treatment, or an explicit "nothing tried", is harvestable. A bare
+  // "tried"/"used" with neither is intentionally NOT harvested, so the engine
+  // asks the treatment question rather than filing a contentless fact.
   { slots: ["treatments", "acne_treatments"], test: TREATMENT_TERMS, label: "treatment" },
+  { slots: ["treatments", "acne_treatments"], test: NO_TREATMENT, label: "no-treatment" },
   { slots: ["context"], test: ALLERGY_STATEMENT, label: "allergy" },
   { slots: ["context"], test: MEDICATION_STATEMENT, label: "medication" },
   { slots: ["atopy"], test: new RegExp(`${FAMILY_STATEMENT.source}[^.!?]{0,80}${ATOPY_TERMS.source}|${ATOPY_TERMS.source}[^.!?]{0,80}${FAMILY_STATEMENT.source}`, "i"), label: "atopy" },
-  { slots: ["sun_history"], test: SUN_TERMS, label: "sun" },
+  { slots: ["sun_history"], test: SUN_TERMS, label: "sun", reject: SELF_DIAGNOSIS },
   { slots: ["hair_care"], test: HAIRCARE_TERMS, label: "hair care" },
   { slots: ["exposures"], test: EXPOSURE_TERMS, label: "exposure" },
   { slots: ["triggers", "acne_pattern"], test: TRIGGER_TERMS, label: "trigger" },
@@ -200,7 +222,7 @@ export function harvest(text: string, eligibleSlots: string[], at: string): Fact
     const target = signal.slots.find((s) => eligible.has(s) && !claimed.has(s));
     if (!target) continue;
     const clause = firstMatchingClause(trimmed, signal.test);
-    if (clause) {
+    if (clause && !(signal.reject && signal.reject.test(clause))) {
       claim(target, clause, signal.focus ? { re: signal.test, kind: signal.focus } : undefined);
     }
   }

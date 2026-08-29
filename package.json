@@ -2,7 +2,7 @@
   "name": "aion-intake",
   "version": "0.1.0",
   "private": true,
-  "description": "AION Intake — pre-visit intelligence for dermatology.",
+  "description": "AION Intake \u2014 pre-visit intelligence for dermatology.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,7 +12,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "tsx scripts/seed.ts",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build && npm run eval:gate",
+    "eval": "tsx evals/run.ts",
+    "eval:golden": "tsx evals/run.ts --golden",
+    "eval:write": "tsx evals/run.ts --write",
+    "eval:baseline": "tsx evals/run.ts --baseline",
+    "eval:gate": "tsx evals/gate.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

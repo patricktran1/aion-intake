@@ -2,7 +2,8 @@ import { handle, jsonOk } from "@/lib/http";
 import { AppError } from "@/lib/errors";
 import { store } from "@/lib/store";
 import { dobMatches, MAX_VERIFICATION_ATTEMPTS } from "@/lib/patient/token";
-import { LIMITS, allow, intakeKey } from "@/lib/ratelimit";
+import { LIMITS, intakeKey } from "@/lib/ratelimit";
+import { enforce } from "@/lib/ratelimit-enforce";
 import { audit } from "@/lib/audit";
 import { isPilot } from "@/lib/config/runtime";
 
@@ -23,7 +24,7 @@ type Params = { params: Promise<{ token: string }> };
 export async function POST(req: Request, { params }: Params) {
   const { token } = await params;
   return handle(req, "POST /api/intake/[token]/verify", async ({ requestId }) => {
-    if (!allow(intakeKey(token, "verify"), LIMITS.patientVerify)) {
+    if (!(await enforce(intakeKey(token, "verify"), LIMITS.patientVerify))) {
       throw new AppError("RATE_LIMITED", "too many verification attempts");
     }
 

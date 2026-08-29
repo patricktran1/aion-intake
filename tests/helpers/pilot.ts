@@ -47,6 +47,10 @@ export async function createPilotFixture(): Promise<PilotFixture> {
     seed: await seedPilot(driver, TEST_PEPPER),
     async reseed() {
       fixture.seed = await seedPilot(driver, TEST_PEPPER);
+      // Rate-limit buckets live in the database in pilot mode, so a test would
+      // otherwise inherit the spent tokens of the one before it and fail for a
+      // reason unrelated to what it is testing.
+      await driver.query("DELETE FROM rate_limits");
     },
     async dispose() {
       await driver.close();

@@ -117,8 +117,18 @@ describe("each authorization class is actually implemented", () => {
 
   it("the middleware gate covers the clinician surface", () => {
     const mw = readFileSync(join(process.cwd(), "src", "middleware.ts"), "utf8");
-    for (const pattern of ["/clinician/:path*", "/api/clinician/:path*", "/api/metrics"]) {
-      expect(mw.includes(pattern), `middleware must match ${pattern}`).toBe(true);
+    // The matcher now runs on every document so the CSP nonce reaches it; the
+    // passphrase gate is applied by path inside the handler instead. Assert
+    // the path test itself, since that is now what does the gating.
+    const gate = mw.match(/const gated = (\/[^\n]*?)\.test\(req\.nextUrl\.pathname\)/)?.[1];
+    expect(gate, "no path gate found in middleware").toBeTruthy();
+    const re = new RegExp(gate!.replace(/^\//, "").replace(/\/$/, ""));
+    for (const path of ["/clinician", "/clinician/int_1", "/api/clinician/intakes", "/api/metrics"]) {
+      expect(re.test(path), `middleware must gate ${path}`).toBe(true);
+    }
+    // And must not gate the patient's own surface.
+    for (const path of ["/intake/abc", "/api/intake/abc/message", "/demo"]) {
+      expect(re.test(path), `middleware must not gate ${path}`).toBe(false);
     }
   });
 });
@@ -148,6 +158,7 @@ describe("state-changing routes", () => {
 
 describe("security headers", () => {
   const cfg = readFileSync(join(process.cwd(), "next.config.ts"), "utf8");
+  const mw = readFileSync(join(process.cwd(), "src", "middleware.ts"), "utf8");
 
   it("sets the headers that matter and none that break voice or camera", () => {
     for (const header of [
@@ -168,15 +179,35 @@ describe("security headers", () => {
   });
 
   it("keeps a compromised page from posting patient answers elsewhere", () => {
-    expect(cfg).toMatch(/connect-src 'self'/);
-    expect(cfg).toMatch(/frame-ancestors 'none'/);
-    expect(cfg).toMatch(/object-src 'none'/);
-    // No inline script is shipped, so none is allowed. Read the script-src
-    // directive on its own: in the source the directives are array elements,
-    // so a looser pattern would match style-src's 'unsafe-inline' next door.
-    const scriptSrc = cfg.match(/"(script-src[^"]*)"/)?.[1] ?? "";
-    expect(scriptSrc, "script-src directive not found").not.toBe("");
+    for (const src of [cfg, mw]) {
+      expect(src).toMatch(/connect-src 'self'/);
+      expect(src).toMatch(/frame-ancestors 'none'/);
+      expect(src).toMatch(/object-src 'none'/);
+    }
+  });
+
+  it("gives scripts a per-request nonce instead of allowing inline", () => {
+    // Next's App Router emits inline bootstrap scripts. A static policy either
+    // blocks hydration — which browser QA caught the first time — or allows
+    // 'unsafe-inline', which gives up most of the protection. The nonce is
+    // what lets the policy stay strict AND the app stay interactive.
+    // Read the constructed directive itself rather than scanning the file,
+    // where a doc comment and the neighbouring style-src would both match.
+    const scriptSrc = mw.match(/`(script-src[^`]*)`/)?.[1] ?? "";
+    expect(scriptSrc, "no script-src template found").not.toBe("");
+    expect(scriptSrc).toContain("'nonce-${nonce}'");
+    expect(scriptSrc).toContain("strict-dynamic");
     expect(scriptSrc).not.toContain("unsafe-inline");
+    // And the static config must not quietly reintroduce a weaker script-src.
+    expect(cfg).not.toMatch(/"script-src/);
+  });
+
+  it("the nonce reaches Next by way of the request headers", () => {
+    // Next reads the nonce back out of the request's CSP header to stamp it on
+    // the scripts it renders; setting it only on the response silently yields
+    // un-nonced scripts and a blank page.
+    expect(mw).toMatch(/headers\.set\("content-security-policy", csp\)/);
+    expect(mw).toMatch(/NextResponse\.next\(\{ request: \{ headers \} \}\)/);
   });
 
   it("does not advertise the runtime", () => {

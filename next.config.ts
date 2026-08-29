@@ -19,7 +19,11 @@ const CSP = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "script-src 'self' 'unsafe-eval'",
+  // script-src is deliberately absent here. It is issued per request by
+  // src/middleware.ts with a nonce, because Next's inline RSC bootstrap needs
+  // one — a static script-src either blocks hydration or has to allow
+  // 'unsafe-inline', and neither is acceptable. default-src 'self' above is
+  // the fallback for any response middleware does not reach.
   "style-src 'self' 'unsafe-inline'",
   // data: is required because the synthetic demo holds photos as data URLs;
   // pilot photos are served from same-origin routes.

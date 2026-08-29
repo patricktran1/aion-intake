@@ -6,7 +6,8 @@ import { pilotConfig } from "@/lib/config/runtime";
 import { store } from "@/lib/store";
 import { DUMMY_HASH, verifyPassword } from "@/lib/auth/password";
 import { SESSION_COOKIE, issueSession, sessionCookieOptions } from "@/lib/auth/session";
-import { LIMITS, allow } from "@/lib/ratelimit";
+import { LIMITS } from "@/lib/ratelimit";
+import { enforce } from "@/lib/ratelimit-enforce";
 import { audit } from "@/lib/audit";
 
 /**
@@ -34,7 +35,7 @@ export async function POST(req: Request) {
 
     // Keyed by address so one account under attack cannot lock out a practice,
     // and separately by nothing else — a shared clinic IP is one office.
-    if (!allow(`login:${email.toLowerCase()}`, LIMITS.login)) {
+    if (!(await enforce(`login:${email.toLowerCase()}`, LIMITS.login))) {
       throw new AppError("RATE_LIMITED", "too many login attempts");
     }
 

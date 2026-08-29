@@ -73,7 +73,11 @@ function toDocument(intake: Intake): string {
 
 export class SqlStore implements Store {
   readonly kind = "sql" as const;
-  private readonly driver: Driver;
+  /**
+   * Readable so the shared rate limiter can borrow the same connection pool
+   * rather than opening a second one for a handful of writes an hour.
+   */
+  readonly driver: Driver;
   private readonly pepper: string;
 
   constructor(driver: Driver, opts: { pepper: string }) {

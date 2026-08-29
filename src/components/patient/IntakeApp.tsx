@@ -128,6 +128,12 @@ export function IntakeApp({ initial }: { initial: PatientView }) {
                 composer instead of stranding it at the top of a tall phone. */}
             <div className="flex flex-1 flex-col justify-end">
               <div className="mx-auto w-full max-w-xl px-5 py-6">
+                {/* The visible heading belongs to the current question. A
+                    screen reader still needs something to orient on, and the
+                    conversation itself is the page. */}
+                <h1 className="sr-only">
+                  Your pre-visit questions for {view.practice.clinicianName}
+                </h1>
                 <ol className="space-y-5">
                   {view.messages.map((m) => (
                     <li key={m.id} className="rise">

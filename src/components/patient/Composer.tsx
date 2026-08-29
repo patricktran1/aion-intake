@@ -27,6 +27,8 @@ export function Composer({
   const [usedVoice, setUsedVoice] = useState(false);
   const [interim, setInterim] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Whether the patient was working in the composer when the turn was sent.
+  const hadFocus = useRef(false);
 
   const speech = useSpeech((text, isFinal) => {
     if (isFinal) {
@@ -45,10 +47,19 @@ export function Composer({
     ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`;
   }, [value, interim]);
 
+  // Put the caret back where the patient left it once the next question lands.
+  // Without this a keyboard user has to tab from the top of the document for
+  // every single question, and a screen reader user loses their place.
+  useEffect(() => {
+    if (!disabled && hadFocus.current) taRef.current?.focus();
+  }, [disabled]);
+
   const submit = (text: string, mode: "text" | "voice") => {
     const t = text.trim();
     if (!t || disabled) return;
+
     if (speech.listening) speech.stop();
+    hadFocus.current = document.activeElement === taRef.current;
     setValue("");
     setInterim("");
     setUsedVoice(false);
@@ -76,7 +87,7 @@ export function Composer({
 
         {hint && <p className="mb-2 text-[13px] leading-snug text-muted">{hint}</p>}
 
-        <div className="flex items-end gap-2 rounded-2xl border border-line-strong bg-surface p-2 focus-within:border-accent">
+        <div className="focus-ring-within flex items-end gap-2 rounded-2xl border border-line-strong bg-surface p-2 transition-shadow">
           <textarea
             ref={taRef}
             value={interim ? `${value}${value ? " " : ""}${interim}` : value}
@@ -87,11 +98,11 @@ export function Composer({
                 submit(value, usedVoice ? "voice" : "text");
               }
             }}
-            disabled={disabled}
+            readOnly={disabled}
             rows={1}
             placeholder={speech.listening ? "Listening — speak naturally…" : placeholder}
             aria-label="Your answer"
-            className="max-h-[180px] min-h-[44px] flex-1 resize-none bg-transparent px-2 py-2.5 text-[17px] leading-snug text-ink outline-none placeholder:text-muted disabled:opacity-60"
+            className="focus-on-wrapper max-h-[180px] min-h-[44px] flex-1 resize-none bg-transparent px-2 py-2.5 text-[17px] leading-snug text-ink outline-none placeholder:text-muted disabled:opacity-60"
           />
 
           {speech.supported && (

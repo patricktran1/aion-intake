@@ -80,7 +80,7 @@ export function ReviewStep({
                     rows={3}
                     autoFocus
                     aria-label={`Edit ${section.label}`}
-                    className="w-full rounded-lg border border-line-strong bg-paper px-3 py-2.5 text-[16px] leading-relaxed text-ink outline-none focus:border-accent"
+                    className="w-full rounded-lg border border-line-strong bg-paper px-3 py-2.5 text-[16px] leading-relaxed text-ink focus:border-accent"
                   />
                   <div className="mt-2 flex gap-2">
                     <button

@@ -143,6 +143,9 @@ async function runPatient(browser, vp, shot) {
   if (vp.width < 500) {
     await ctx.pages()[0].setViewportSize({ width: vp.width, height: Math.round(vp.height * 0.45) });
     await page.locator('textarea[aria-label="Your answer"]').fill("typing with the keyboard up");
+    // Let React flush before screenshotting, or the shot catches the send
+    // button in its pre-update disabled state and looks like a defect.
+    await page.waitForTimeout(250);
     const visible = await page.getByRole("button", { name: "Send answer" }).isVisible();
     if (!visible) note(`patient/${vp.name}/keyboard`, "send button is not visible with the keyboard open");
     if (shot) await page.screenshot({ path: `${SHOTS}/p-${vp.name}-02-keyboard.png` });

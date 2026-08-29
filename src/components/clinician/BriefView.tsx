@@ -274,7 +274,7 @@ export function BriefView({ data }: { data: BriefData }) {
                 onBlur={() => patch({ hpi }, "hpi")}
                 rows={10}
                 aria-label="Draft history of present illness"
-                className="w-full resize-y overflow-hidden bg-surface px-5 py-4 font-mono text-[13.5px] leading-relaxed text-ink outline-none focus:bg-paper"
+                className="w-full resize-y overflow-hidden bg-surface px-5 py-4 font-mono text-[13.5px] leading-relaxed text-ink focus:bg-paper"
               />
               <div className="flex items-center justify-between gap-3 border-t hairline px-5 py-3">
                 <p className="text-[12px] text-muted">
@@ -328,7 +328,7 @@ export function BriefView({ data }: { data: BriefData }) {
                       value={review[key]}
                       onChange={(e) => setReview((r) => ({ ...r, [key]: e.target.value }))}
                       onBlur={() => patch({ review }, "review")}
-                      className="mt-1.5 w-full resize-y rounded-lg border border-line bg-paper px-3 py-2 text-[14px] leading-relaxed text-ink outline-none focus:border-accent focus:bg-surface"
+                      className="mt-1.5 w-full resize-y rounded-lg border border-line bg-paper px-3 py-2 text-[14px] leading-relaxed text-ink focus:border-accent focus:bg-surface"
                     />
                   </div>
                 ))}
@@ -369,7 +369,7 @@ export function BriefView({ data }: { data: BriefData }) {
                   onChange={(e) => setNote(e.target.value)}
                   rows={18}
                   aria-label="Draft clinical note"
-                  className="w-full resize-y overflow-hidden bg-surface px-5 py-4 font-mono text-[13px] leading-relaxed text-ink outline-none focus:bg-paper"
+                  className="w-full resize-y overflow-hidden bg-surface px-5 py-4 font-mono text-[13px] leading-relaxed text-ink focus:bg-paper"
                 />
               </div>
             ) : (

@@ -12,7 +12,9 @@
   --color-surface: #ffffff;
   --color-ink: #14171a;
   --color-ink-soft: #3d444d;
-  --color-muted: #6b737e;
+  /* 5.17:1 on paper, 5.39:1 on surface — comfortably past AA for the 12-13px
+     secondary text this is used for, where 4.6:1 was only just legal. */
+  --color-muted: #636b76;
   --color-line: #e5e3de;
   --color-line-strong: #d3d0c9;
   --color-accent: #145349;
@@ -59,10 +61,28 @@ body {
   }
 }
 
-:where(button, a, input, textarea, select):focus-visible {
+/* Real specificity, not :where(). A zero-specificity rule loses to Tailwind's
+   `outline-none`, which is how the composer ended up with no focus indicator at
+   all — the container border changed colour and nothing else. Controls that
+   deliberately show focus on a wrapper opt out with .focus-on-wrapper. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+.focus-on-wrapper:focus-visible {
+  outline: none;
+}
+
+/* The wrapper then carries an unmistakable indicator, not just a tint. */
+.focus-ring-within:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 /* Chat turns settle in rather than fly in. */

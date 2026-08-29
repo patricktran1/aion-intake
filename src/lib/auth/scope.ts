@@ -28,11 +28,11 @@ export interface ClinicianScope {
   ctx: ClinicianContext | null;
 }
 
-export async function clinicianScope(req: Request): Promise<ClinicianScope> {
+export async function clinicianScope(): Promise<ClinicianScope> {
   if (!isPilot()) {
     return { practiceId: null, actor: { kind: "system" }, ctx: null };
   }
-  const ctx = await requireClinician(req);
+  const ctx = await requireClinician();
   return { practiceId: ctx.practiceId, actor: ctx.actor, ctx };
 }
 
@@ -42,7 +42,7 @@ export async function clinicianScope(req: Request): Promise<ClinicianScope> {
  * and no tenant to cross.
  */
 export async function clinicianWriteScope(req: Request): Promise<ClinicianScope> {
-  const scope = await clinicianScope(req);
+  const scope = await clinicianScope();
   if (scope.ctx) requireCsrf(req, scope.ctx);
   return scope;
 }

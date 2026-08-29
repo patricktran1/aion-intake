@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "tsx scripts/seed.ts",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run build && npm run eval:gate",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build && npm run eval:gate && npm run smoke",
     "eval": "tsx evals/run.ts",
     "eval:golden": "tsx evals/run.ts --golden",
     "eval:write": "tsx evals/run.ts --write",
@@ -25,7 +25,8 @@
     "db:seed": "tsx scripts/pilot.ts seed",
     "pilot:check": "tsx scripts/pilot.ts check",
     "pilot:retention": "tsx scripts/pilot.ts retention",
-    "dev:pilot": "bash scripts/dev-pilot.sh"
+    "dev:pilot": "bash scripts/dev-pilot.sh",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

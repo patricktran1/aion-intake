@@ -44,7 +44,7 @@ export interface ClinicianContext {
  * That is the only revocation a stateless session needs, and it is the one
  * that matters when someone leaves a practice.
  */
-export async function requireClinician(req: Request): Promise<ClinicianContext> {
+export async function requireClinician(): Promise<ClinicianContext> {
   if (!isPilot()) throw new AppError("NOT_AVAILABLE_IN_THIS_MODE", "clinician auth is pilot-only");
 
   const jar = await cookies();

@@ -1,0 +1,59 @@
+name: verify
+
+# Everything that must be true before a change lands. Nothing here needs a
+# production secret: the pilot path is exercised against in-process Postgres
+# and a temporary directory, so CI proves the durable code path without
+# holding a credential that could reach real data.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Keeps the structured logs out of the test output.
+      AION_LOG_ANALYTICS: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        run: npm run test
+      - name: Build
+        run: npm run build
+      - name: Evaluation gate
+        run: npm run eval:gate
+
+      # The pilot path, end to end, from an empty database. If migrations do
+      # not build the schema from zero, this is where it shows.
+      - name: Pilot bootstrap (synthetic)
+        env:
+          AION_RUNTIME_MODE: pilot
+          DATABASE_URL: pglite:.ci-pglite
+          AION_OBJECT_STORE: local
+          AION_OBJECT_STORE_ROOT: .ci-objects
+          AION_SESSION_SECRET: ci-session-secret-not-used-anywhere-real-0001
+          AION_TOKEN_PEPPER: ci-token-pepper-not-used-anywhere-real-0002
+          AION_PHOTO_RETENTION_DAYS: "30"
+          AION_INTAKE_RETENTION_DAYS: "90"
+        run: |
+          npm run db:migrate
+          npm run db:seed -- --confirm
+          npm run pilot:check
+          npm run pilot:retention
+
+      # Guards that only fail when someone has made a specific mistake.
+      - name: Security smoke tests
+        run: npm run smoke

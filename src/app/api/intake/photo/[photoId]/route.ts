@@ -1,7 +1,6 @@
 import { handle } from "@/lib/http";
 import { AppError } from "@/lib/errors";
-import { requirePilotMode } from "@/lib/auth/guard";
-import { requireClinician } from "@/lib/auth/guard";
+import { requireClinician, requirePilotMode } from "@/lib/auth/guard";
 import { store, SqlStore } from "@/lib/store";
 import { objectStore } from "@/lib/objects/select";
 import { LIMITS, allow } from "@/lib/ratelimit";
@@ -25,7 +24,7 @@ export async function GET(req: Request, { params }: Params) {
   const { photoId } = await params;
   return handle(req, "GET /api/intake/photo/[photoId]", async ({ requestId }) => {
     requirePilotMode();
-    const ctx = await requireClinician(req);
+    const ctx = await requireClinician();
     if (!allow(`photo:${ctx.practiceId}`, LIMITS.photoRead)) {
       throw new AppError("RATE_LIMITED", "photo read rate exceeded");
     }

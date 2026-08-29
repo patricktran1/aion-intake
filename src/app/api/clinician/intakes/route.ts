@@ -14,7 +14,7 @@ import { track } from "@/lib/analytics";
  */
 export async function GET(req: Request) {
   return handle(req, "GET /api/clinician/intakes", async () => {
-    const scope = await clinicianScope(req);
+    const scope = await clinicianScope();
     const s = await store();
     const rows = (await s.listBundles(scope.practiceId)).map(listRow);
     track("clinician_list_viewed", { count: rows.length });

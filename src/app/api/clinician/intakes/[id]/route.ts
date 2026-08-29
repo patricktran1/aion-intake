@@ -1,7 +1,6 @@
 import { bundleById, saveIntake, store } from "@/lib/store";
 import { withIntakeLock } from "@/lib/store/lock";
-import { clinicianScope } from "@/lib/auth/scope";
-import { audit } from "@/lib/audit";
+import { clinicianWriteScope } from "@/lib/auth/scope";
 import { fail, json } from "@/lib/api";
 import { MAX_REVIEW_FIELD, clinicianReviewSchema } from "@/lib/domain/types";
 import { track } from "@/lib/analytics";
@@ -18,7 +17,7 @@ export async function PATCH(req: Request, { params }: Params) {
   // The tenant check happens before anything is read or written. In pilot mode
   // an intake belonging to another practice is indistinguishable from one that
   // does not exist.
-  const scope = await clinicianScope(req);
+  const scope = await clinicianWriteScope(req);
   if (scope.practiceId) {
     const s = await store();
     if (!(await s.bundleForClinician(id, scope.practiceId))) return fail("Intake not found.", 404);

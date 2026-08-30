@@ -145,11 +145,14 @@ guarantee into the database; it is not built.
 - The local filesystem adapter validates every key twice (shape, then resolved
   path inside the root) before touching disk.
 
-**Where we think this is weakest:** the S3 adapter is a hand-rolled SigV4
-implementation (`src/lib/objects/s3.ts`). It is small and readable, which is
-why it exists instead of a large SDK, but it is exactly the kind of code where
-a subtle signing bug is possible. It has not been exercised against a live
-bucket in this repository. Read it adversarially.
+**Signing** is delegated to `aws4fetch`, a small (65KB, zero-dependency),
+maintained SigV4-over-fetch library, not to hand-written crypto. An earlier
+version of this file carried a bespoke SigV4 implementation; it was the #1 item
+on this list and has been removed. The adapter is tested against a mock S3
+endpoint (`tests/pilot-s3.test.ts`) which asserts every request is SigV4-signed,
+encryption is requested on upload, path/key addressing is correct, and the CRUD
+lifecycle round-trips. It has still not been exercised against a *live* bucket
+in this repository — that remains provider validation (see below).
 
 ---
 
@@ -193,20 +196,20 @@ role INSERT and SELECT only; nothing enforces that from here.
 
 If you have limited time, spend it here:
 
-1. **The SigV4 implementation** (`src/lib/objects/s3.ts`). Hand-rolled crypto
-   adjacent code, unexercised against a live endpoint.
-2. **Tenancy in application code rather than RLS.** Look for any query path
+1. **Tenancy in application code rather than RLS.** Look for any query path
    that could reach an intake without a practice id — particularly anything
    added after this document was written.
-3. **Date of birth as the second factor.** Is it enough for the threat you
+2. **Date of birth as the second factor.** Is it enough for the threat you
    think a pilot faces?
-4. **The patient token in the URL path.** History, referrers, proxy logs.
-5. **Session revocation.** A stolen cookie is valid for up to 12 hours unless
+3. **The patient token in the URL path.** History, referrers, proxy logs.
+4. **Session revocation.** A stolen cookie is valid for up to 12 hours unless
    the account is disabled.
-6. **The JSONB intake document.** It is parsed back through a Zod schema, but
+5. **The JSONB intake document.** It is parsed back through a Zod schema, but
    it is the one place where a large attacker-influenced structure is stored
    and re-read.
-7. **Local password accounts.** No MFA. Is scrypt configured correctly here?
+6. **Local password accounts.** No MFA. Is scrypt configured correctly here?
+7. **The S3 object store against a live bucket.** The signing is now a library
+   and is tested against a mock, but no live-bucket round-trip has run here.
 
 ---
 

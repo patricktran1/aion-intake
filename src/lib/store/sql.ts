@@ -21,12 +21,17 @@ import type { Intake, IntakeBundle, Patient, Practice, Visit } from "@/lib/domai
 import { intakeSchema } from "@/lib/domain/types";
 import type { Driver, Queryable } from "@/lib/db/driver";
 import { hashToken } from "@/lib/patient/token";
+import { photoKey, type ObjectStore } from "@/lib/objects";
+import { MAX_PHOTOS } from "@/lib/photos";
+import { randomBytes } from "node:crypto";
 import { MAX_VERIFICATION_ATTEMPTS } from "@/lib/patient/token";
 import { AppError } from "@/lib/errors";
 import type {
   AccessResult,
   AuditEvent,
   ClinicianAccount,
+  PhotoInput,
+  PhotoResult,
   Store,
 } from "./types";
 
@@ -71,6 +76,12 @@ function toDocument(intake: Intake): string {
   return JSON.stringify(intake);
 }
 
+/** The bytes behind a `data:...;base64,...` URL. */
+function dataUrlToBytes(dataUrl: string): Buffer {
+  const comma = dataUrl.indexOf(",");
+  return Buffer.from(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl, "base64");
+}
+
 export class SqlStore implements Store {
   readonly kind = "sql" as const;
   /**
@@ -79,10 +90,18 @@ export class SqlStore implements Store {
    */
   readonly driver: Driver;
   private readonly pepper: string;
+  /**
+   * The object store is injected because photo bytes and photo metadata live in
+   * two different places that must be kept consistent, and the store is the one
+   * component positioned to keep them so. Optional so that maintenance uses of
+   * the store (migrations, retention) can construct it without one.
+   */
+  private readonly objects: ObjectStore | null;
 
-  constructor(driver: Driver, opts: { pepper: string }) {
+  constructor(driver: Driver, opts: { pepper: string; objects?: ObjectStore | null }) {
     this.driver = driver;
     this.pepper = opts.pepper;
+    this.objects = opts.objects ?? null;
   }
 
   async init(): Promise<void> {
@@ -381,6 +400,106 @@ export class SqlStore implements Store {
   }
 
   // --- Photos --------------------------------------------------------------
+
+  /**
+   * Persists a validated photo: bytes to the object store, metadata to the
+   * photos table, both under a lock on the intake row so the freeze and count
+   * checks cannot race an upload.
+   *
+   * The row is written before the object, and the object put is idempotent by
+   * key: a failure between the two leaves a row pointing at a missing object,
+   * which shows as a broken photo and is cleaned by retention — a recoverable
+   * inconsistency. The reverse (an object with no row) would be an invisible
+   * orphan that nothing ever reclaims.
+   */
+  async attachPhoto(intakeId: string, practiceId: string, input: PhotoInput): Promise<PhotoResult> {
+    if (!this.objects) throw new AppError("INTERNAL", "object store not configured");
+    const objects = this.objects;
+
+    return this.driver.transaction(async (tx) => {
+      const { rows } = await tx.query<IntakeRow>(
+        "SELECT * FROM intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+        [intakeId],
+      );
+      if (!rows[0]) throw new AppError("NOT_FOUND", `intake ${intakeId}`);
+      if (rows[0].practice_id !== practiceId) throw new AppError("ACCESS_DENIED", "intake belongs to another practice");
+
+      const refreshed = async (): Promise<IntakeBundle> => {
+        const b = await this.assemble(tx, rows[0]);
+        if (!b) throw new AppError("INTERNAL", "intake has no bundle");
+        return b;
+      };
+
+      const status = rows[0].status;
+      if (status === "ready_for_review" || status === "reviewed") {
+        return { ok: false, reason: "frozen", bundle: await refreshed() };
+      }
+
+      const { rows: countRows } = await tx.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM photos WHERE intake_id = $1 AND deleted_at IS NULL",
+        [intakeId],
+      );
+      if (Number(countRows[0]?.n ?? 0) >= MAX_PHOTOS) {
+        return { ok: false, reason: "limit", bundle: await refreshed() };
+      }
+
+      const key = photoKey(practiceId, intakeId, input.mime);
+      const id = `pho_${randomBytes(8).toString("hex")}`;
+      const { rows: inserted } = await tx.query<{ id: string; object_key: string }>(
+        `INSERT INTO photos (id, intake_id, practice_id, object_key, mime, bytes, width, height,
+                             kind, caption, advisories, idempotency_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+         ON CONFLICT DO NOTHING
+         RETURNING id, object_key`,
+        [id, intakeId, practiceId, key, input.mime, input.bytes, input.width, input.height,
+          input.kind, input.caption, JSON.stringify(input.advisories), input.idempotencyKey ?? null],
+      );
+
+      // On an idempotent retry the insert did nothing; find the row that
+      // already exists so the object is re-put under the right key.
+      let objectKey = inserted[0]?.object_key;
+      if (!objectKey && input.idempotencyKey) {
+        const { rows: existing } = await tx.query<{ object_key: string }>(
+          "SELECT object_key FROM photos WHERE intake_id = $1 AND idempotency_key = $2",
+          [intakeId, input.idempotencyKey],
+        );
+        objectKey = existing[0]?.object_key;
+      }
+      if (!objectKey) throw new AppError("INTERNAL", "photo insert conflicted without an idempotency key");
+
+      await objects.put(objectKey, dataUrlToBytes(input.dataUrl), input.mime);
+      return { ok: true, bundle: await refreshed() };
+    });
+  }
+
+  async removePhoto(intakeId: string, photoId: string): Promise<IntakeBundle> {
+    if (!this.objects) throw new AppError("INTERNAL", "object store not configured");
+    const objects = this.objects;
+
+    return this.driver.transaction(async (tx) => {
+      const { rows } = await tx.query<IntakeRow>(
+        "SELECT * FROM intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+        [intakeId],
+      );
+      if (!rows[0]) throw new AppError("NOT_FOUND", `intake ${intakeId}`);
+
+      const status = rows[0].status;
+      // A frozen intake's photos are part of the record under review.
+      if (status !== "ready_for_review" && status !== "reviewed") {
+        const { rows: del } = await tx.query<{ object_key: string }>(
+          "DELETE FROM photos WHERE id = $1 AND intake_id = $2 RETURNING object_key",
+          [photoId, intakeId],
+        );
+        // The object goes after the row, and a missing object is not an error:
+        // deletion converges to "gone" whichever operation the failure hit.
+        if (del[0]) await objects.delete(del[0].object_key).catch(() => false);
+      }
+
+      const b = await this.assemble(tx, rows[0]);
+      if (!b) throw new AppError("INTERNAL", "intake has no bundle");
+      return b;
+    });
+  }
 
   async addPhoto(p: {
     id: string;

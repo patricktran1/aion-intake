@@ -103,6 +103,26 @@ export interface ClinicianAccount {
   disabledAt: string | null;
 }
 
+/** A photo whose bytes and metadata have already been validated by the route. */
+export interface PhotoInput {
+  /** The validated data URL — the byte source for both adapters. */
+  dataUrl: string;
+  mime: string;
+  bytes: number;
+  width: number;
+  height: number;
+  kind: string;
+  caption: string;
+  advisories: string[];
+  /** Set so a retried upload cannot create a second photo. */
+  idempotencyKey?: string | null;
+}
+
+export type PhotoResult =
+  | { ok: true; bundle: IntakeBundle }
+  /** The intake was frozen, or already at the photo cap. */
+  | { ok: false; reason: "frozen" | "limit"; bundle: IntakeBundle };
+
 export interface Store {
   readonly kind: "memory" | "sql";
 
@@ -142,6 +162,20 @@ export interface Store {
     id: string,
     mutate: (intake: Intake) => Promise<{ intake: Intake | null; result: T }>,
   ): Promise<T>;
+
+  // --- Photos ------------------------------------------------------------
+  /**
+   * Persists an already-validated photo and returns the refreshed bundle.
+   *
+   * The two adapters store photos in genuinely different places — the demo
+   * keeps the data URL in the intake document, the pilot writes the bytes to
+   * object storage and the metadata to the photos table — so this is a real
+   * polymorphic method rather than a shared implementation. Both perform the
+   * freeze and count checks atomically, and both are idempotent under a retry
+   * carrying the same `idempotencyKey`.
+   */
+  attachPhoto(intakeId: string, practiceId: string, input: PhotoInput): Promise<PhotoResult>;
+  removePhoto(intakeId: string, photoId: string): Promise<IntakeBundle>;
 
   // --- Deletion ----------------------------------------------------------
   /**

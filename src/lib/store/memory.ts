@@ -17,13 +17,16 @@
  * the two are separate files rather than one file with flags.
  */
 
-import type { Intake, IntakeBundle, Patient, Practice, Visit } from "@/lib/domain/types";
+import type { Intake, IntakeBundle, Patient, Photo, Practice, Visit } from "@/lib/domain/types";
+import { MAX_PHOTOS } from "@/lib/photos";
 import { seedData } from "@/lib/demo/seed";
 import { withIntakeLock } from "./lock";
 import type {
   AccessResult,
   AuditEvent,
   ClinicianAccount,
+  PhotoInput,
+  PhotoResult,
   Store,
 } from "./types";
 
@@ -190,6 +193,49 @@ export class MemoryStore implements Store {
       const { intake, result } = await mutate(current);
       if (intake) saveIntake(intake);
       return result;
+    });
+  }
+
+  async attachPhoto(intakeId: string, _practiceId: string, input: PhotoInput): Promise<PhotoResult> {
+    return withIntakeLock(intakeId, async () => {
+      const intake = getIntake(intakeId);
+      if (!intake) throw new Error(`intake ${intakeId} not found`);
+      const bundle = bundleFor(intake);
+      if (!bundle) throw new Error(`intake ${intakeId} has no bundle`);
+      if (intake.status === "ready_for_review" || intake.status === "reviewed") {
+        return { ok: false, reason: "frozen", bundle };
+      }
+      if (intake.photos.length >= MAX_PHOTOS) {
+        return { ok: false, reason: "limit", bundle };
+      }
+      // Demo photos are the data URL itself, inside the intake document. Nothing
+      // reaches an object store — there is nothing real to protect.
+      const photo: Photo = {
+        id: `pho_${Math.random().toString(36).slice(2, 12)}`,
+        kind: input.kind as Photo["kind"],
+        mime: input.mime,
+        bytes: input.bytes,
+        width: input.width,
+        height: input.height,
+        dataUrl: input.dataUrl,
+        caption: input.caption,
+        advisories: input.advisories,
+        at: new Date().toISOString(),
+      };
+      const saved = saveIntake({ ...intake, photos: [...intake.photos, photo].slice(0, MAX_PHOTOS) });
+      return { ok: true, bundle: { ...bundle, intake: saved } };
+    });
+  }
+
+  async removePhoto(intakeId: string, photoId: string): Promise<IntakeBundle> {
+    return withIntakeLock(intakeId, async () => {
+      const intake = getIntake(intakeId);
+      if (!intake) throw new Error(`intake ${intakeId} not found`);
+      const bundle = bundleFor(intake);
+      if (!bundle) throw new Error(`intake ${intakeId} has no bundle`);
+      if (intake.status === "ready_for_review" || intake.status === "reviewed") return bundle;
+      const saved = saveIntake({ ...intake, photos: intake.photos.filter((p) => p.id !== photoId) });
+      return { ...bundle, intake: saved };
     });
   }
 

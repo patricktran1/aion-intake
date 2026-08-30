@@ -1,23 +1,21 @@
-import { bundleByToken, saveIntake } from "@/lib/store";
-import { withIntakeLock } from "@/lib/store/lock";
-import { fail, json, patientView } from "@/lib/api";
+import { handle, jsonOk } from "@/lib/http";
+import { patientView } from "@/lib/api";
+import { requireVerifiedPatient } from "@/lib/patient/access";
+import { store } from "@/lib/store";
 
 type Params = { params: Promise<{ token: string; photoId: string }> };
 
-export async function DELETE(_req: Request, { params }: Params) {
+/**
+ * A patient removing their own photo before submitting. Frozen intakes ignore
+ * the removal — the photos are part of the record under review — and return
+ * the unchanged bundle rather than erroring, so a stale tab is harmless.
+ */
+export async function DELETE(req: Request, { params }: Params) {
   const { token, photoId } = await params;
-  const found = bundleByToken(token);
-  if (!found) return fail("This intake link is no longer valid.", 404);
-  return withIntakeLock(found.intake.id, async () => {
-    const bundle = bundleByToken(token);
-    if (!bundle) return fail("This intake link is no longer valid.", 404);
-    if (bundle.intake.status === "ready_for_review" || bundle.intake.status === "reviewed") {
-      return fail("This intake has been submitted — photos can no longer be changed.", 409);
-    }
-    const saved = saveIntake({
-      ...bundle.intake,
-      photos: bundle.intake.photos.filter((p) => p.id !== photoId),
-    });
-    return json(patientView({ ...bundle, intake: saved }));
+  return handle(req, "DELETE /api/intake/[token]/photos/[photoId]", async () => {
+    const access = await requireVerifiedPatient(token);
+    const s = await store();
+    const bundle = await s.removePhoto(access.intakeId, photoId);
+    return jsonOk(patientView(bundle));
   });
 }

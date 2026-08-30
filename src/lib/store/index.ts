@@ -45,6 +45,7 @@ async function buildSqlStore(): Promise<Store> {
   const { Pool } = await import("pg");
   const pool = new Pool({ connectionString: cfg.databaseUrl, max: 10 });
   const { driverFrom } = await import("@/lib/db/driver");
+  const { objectStore } = await import("@/lib/objects/select");
   // A pool hands each transaction its own connection, so transactions may
   // overlap freely; serialising them would be a self-inflicted bottleneck.
   const driver = driverFrom(
@@ -57,7 +58,7 @@ async function buildSqlStore(): Promise<Store> {
     },
     { exclusive: false },
   );
-  return new SqlStore(driver, { pepper: cfg.tokenPepper });
+  return new SqlStore(driver, { pepper: cfg.tokenPepper, objects: await objectStore() });
 }
 
 /**

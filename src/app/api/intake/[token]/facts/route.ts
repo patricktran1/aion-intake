@@ -1,8 +1,11 @@
-import { bundleByToken, saveIntake } from "@/lib/store";
-import { withIntakeLock } from "@/lib/store/lock";
-import { fail, json, patientView } from "@/lib/api";
-import { LIMITS, allow, intakeKey } from "@/lib/ratelimit";
+import { handle, jsonOk } from "@/lib/http";
+import { patientView } from "@/lib/api";
+import { requireVerifiedPatient } from "@/lib/patient/access";
+import { store } from "@/lib/store";
+import { LIMITS, intakeKey } from "@/lib/ratelimit";
+import { enforce } from "@/lib/ratelimit-enforce";
 import { classifyCertainty, tidy } from "@/lib/interview/engine";
+import { AppError } from "@/lib/errors";
 import { track } from "@/lib/analytics";
 
 type Params = { params: Promise<{ token: string }> };
@@ -14,46 +17,46 @@ type Params = { params: Promise<{ token: string }> };
  */
 export async function PATCH(req: Request, { params }: Params) {
   const { token } = await params;
-  const found = bundleByToken(token);
-  if (!found) return fail("This intake link is no longer valid.", 404);
-  if (!allow(intakeKey(token, "intake"), LIMITS.intakeWrite)) {
-    return fail("You're going a little fast — give it a moment and try again.", 429);
-  }
-
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return fail("Could not read that edit.", 400);
-  }
-  const b = (body ?? {}) as { slot?: unknown; value?: unknown };
-  const slot = typeof b.slot === "string" ? b.slot : "";
-  const value = typeof b.value === "string" ? b.value.trim().slice(0, 1000) : "";
-  if (!slot) return fail("Missing field.", 400);
-
-  return withIntakeLock(found.intake.id, async () => {
-    const bundle = bundleByToken(token);
-    if (!bundle) return fail("This intake link is no longer valid.", 404);
-    // Patient-supplied facts freeze at submission. After that, the brief is what
-    // the clinician reviews; a link holder must not be able to rewrite history
-    // underneath a review.
-    if (bundle.intake.status === "ready_for_review" || bundle.intake.status === "reviewed") {
-      return fail("This intake has been submitted and can no longer be edited.", 409);
+  return handle(req, "PATCH /api/intake/[token]/facts", async () => {
+    if (!(await enforce(intakeKey(token, "intake"), LIMITS.intakeWrite))) {
+      throw new AppError("RATE_LIMITED", "intake write rate exceeded");
     }
+    const access = await requireVerifiedPatient(token);
 
-    const facts = bundle.intake.facts.filter((f) => f.slot !== slot);
-    if (value) {
-      facts.push({
-        slot,
-        value: tidy(value),
-        verbatim: value,
-        certainty: classifyCertainty(value),
-        source: "patient",
-        at: new Date().toISOString(),
-      });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      throw new AppError("BAD_REQUEST", "unparseable edit body");
     }
-    const saved = saveIntake({ ...bundle.intake, facts });
-    track("intake_review_edited", { intake_id: saved.id, slot, cleared: value.length === 0 });
-    return json(patientView({ ...bundle, intake: saved }));
+    const b = (body ?? {}) as { slot?: unknown; value?: unknown };
+    const slot = typeof b.slot === "string" ? b.slot : "";
+    const value = typeof b.value === "string" ? b.value.trim().slice(0, 1000) : "";
+    if (!slot) throw new AppError("BAD_REQUEST", "missing slot");
+
+    const s = await store();
+    const view = await s.withIntake(access.intakeId, async (intake) => {
+      const bundle = { ...(await s.bundleById(access.intakeId))!, intake };
+      // Patient-supplied facts freeze at submission — a link holder must not
+      // rewrite history underneath a clinician's review.
+      if (intake.status === "ready_for_review" || intake.status === "reviewed") {
+        throw new AppError("INTAKE_COMPLETE", "facts edited after submission");
+      }
+      const facts = intake.facts.filter((f) => f.slot !== slot);
+      if (value) {
+        facts.push({
+          slot,
+          value: tidy(value),
+          verbatim: value,
+          certainty: classifyCertainty(value),
+          source: "patient",
+          at: new Date().toISOString(),
+        });
+      }
+      const saved = { ...intake, facts };
+      track("intake_review_edited", { intake_id: saved.id, slot, cleared: value.length === 0 });
+      return { intake: saved, result: patientView({ ...bundle, intake: saved }) };
+    });
+    return jsonOk(view);
   });
 }

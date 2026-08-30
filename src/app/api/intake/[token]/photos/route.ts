@@ -1,79 +1,73 @@
-import { bundleByToken, saveIntake } from "@/lib/store";
-import { withIntakeLock } from "@/lib/store/lock";
-import type { Photo } from "@/lib/domain/types";
-import { fail, json, patientView } from "@/lib/api";
-import { LIMITS, allow, intakeKey } from "@/lib/ratelimit";
-import { MAX_PHOTOS, MAX_UPLOAD_BYTES, checkPhoto, inspectDataUrl, isAcceptedDataUrl } from "@/lib/photos";
+import { handle, jsonOk } from "@/lib/http";
+import { patientView } from "@/lib/api";
+import { requireVerifiedPatient } from "@/lib/patient/access";
+import { store } from "@/lib/store";
+import { LIMITS, intakeKey } from "@/lib/ratelimit";
+import { enforce } from "@/lib/ratelimit-enforce";
+import { MAX_UPLOAD_BYTES, checkPhoto, inspectDataUrl, isAcceptedDataUrl } from "@/lib/photos";
+import { AppError } from "@/lib/errors";
+import { audit } from "@/lib/audit";
 import { track } from "@/lib/analytics";
 
 type Params = { params: Promise<{ token: string }> };
 
 /**
- * Photos arrive already downscaled and re-encoded by the browser, which both
- * keeps the payload small and strips EXIF (including GPS) before it ever
- * reaches the server.
+ * Photo upload.
+ *
+ * All validation runs on the actual bytes, never on what the client declares.
+ * Persistence goes through the store: the demo keeps the data URL in the
+ * document, the pilot writes the bytes to private object storage and the
+ * metadata to the photos table. The route does not know or care which.
  */
 export async function POST(req: Request, { params }: Params) {
   const { token } = await params;
-  const found = bundleByToken(token);
-  if (!found) return fail("This intake link is no longer valid.", 404);
-  if (!allow(intakeKey(token, "photo"), LIMITS.photoUpload)) {
-    return fail("You're going a little fast — give it a moment and try again.", 429);
-  }
-
-  // Reject an obviously oversized request before buffering/parsing its body.
-  // Data-URL overhead is ~4/3, plus JSON envelope — anything past ~9MB cannot
-  // contain a photo we would accept.
-  const declared = Number(req.headers.get("content-length") ?? 0);
-  if (declared > MAX_UPLOAD_BYTES * 1.5) {
-    return fail("That photo is too large to upload. Try taking it again at a normal size.", 413);
-  }
-
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return fail("That photo didn't upload correctly. Please try again.", 400);
-  }
-  const b = (body ?? {}) as Record<string, unknown>;
-  const dataUrl = typeof b.dataUrl === "string" ? b.dataUrl : "";
-  // The client's declared mime is kept only to record WHAT was rejected when a
-  // photo fails inspection; every gate below runs on the actual bytes, and the
-  // declared width/height are ignored entirely.
-  const mime = typeof b.mime === "string" ? b.mime : "";
-  const kind = b.kind === "wide" || b.kind === "close" ? b.kind : "unspecified";
-  const caption = typeof b.caption === "string" ? b.caption.slice(0, 120) : "";
-  const sharpness = typeof b.sharpness === "number" ? b.sharpness : undefined;
-
-  if (!isAcceptedDataUrl(dataUrl)) {
-    return fail("That file didn't look like a photo. Please try again.", 400);
-  }
-  const bytes = Math.round((dataUrl.length * 3) / 4);
-
-  // The lock covers the count check through the save: two simultaneous uploads
-  // must not both read "2 photos" and leave the intake holding four.
-  return withIntakeLock(found.intake.id, async () => {
-    const bundle = bundleByToken(token);
-    if (!bundle) return fail("This intake link is no longer valid.", 404);
-    if (bundle.intake.status === "ready_for_review" || bundle.intake.status === "reviewed") {
-      return fail("This intake has been submitted — photos can no longer be changed.", 409);
+  return handle(req, "POST /api/intake/[token]/photos", async ({ requestId }) => {
+    if (!(await enforce(intakeKey(token, "photo"), LIMITS.photoUpload))) {
+      throw new AppError("RATE_LIMITED", "photo upload rate exceeded");
     }
 
-    // The client DECLARES mime/width/height; a hostile client can declare
-    // anything. Every gate below runs on what the actual bytes say instead.
+    // Reject an obviously oversized request before buffering its body.
+    const declared = Number(req.headers.get("content-length") ?? 0);
+    if (declared > MAX_UPLOAD_BYTES * 1.5) {
+      throw new AppError("PHOTO_TOO_LARGE", `content-length ${declared}`);
+    }
+
+    const access = await requireVerifiedPatient(token);
+
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      throw new AppError("PHOTO_INVALID", "unparseable photo body");
+    }
+    const b = (body ?? {}) as Record<string, unknown>;
+    const dataUrl = typeof b.dataUrl === "string" ? b.dataUrl : "";
+    const mime = typeof b.mime === "string" ? b.mime : "";
+    const kind = b.kind === "wide" || b.kind === "close" ? b.kind : "unspecified";
+    const caption = typeof b.caption === "string" ? b.caption.slice(0, 120) : "";
+    const sharpness = typeof b.sharpness === "number" ? b.sharpness : undefined;
+    // A client-supplied idempotency key lets a retried upload converge to one
+    // photo rather than duplicating on a flaky connection.
+    const idempotencyKey =
+      typeof b.idempotencyKey === "string" ? b.idempotencyKey.slice(0, 100) : null;
+
+    if (!isAcceptedDataUrl(dataUrl)) throw new AppError("PHOTO_INVALID", "not an accepted data url");
+    const bytes = Math.round((dataUrl.length * 3) / 4);
+
+    // The client DECLARES mime/width/height; a hostile client declares anything.
     const inspected = inspectDataUrl(dataUrl);
     if (!inspected) {
-      track("intake_photo_rejected", { intake_id: bundle.intake.id, mime, bytes, reason: "not_an_image" });
-      return fail("That file didn't look like a photo. Please try again.", 400);
+      track("intake_photo_rejected", { intake_id: access.intakeId, mime, bytes, reason: "not_an_image" });
+      throw new AppError("PHOTO_INVALID", "byte inspection found no image");
     }
     if (inspected.hasExif) {
-      // The product's privacy claim is that photo metadata (incl. GPS) is
-      // stripped before upload. The real client re-encodes through a canvas and
-      // never produces EXIF, so an EXIF-bearing JPEG is a bypass attempt — and
-      // accepting it would store location data we promised not to hold.
-      track("intake_photo_rejected", { intake_id: bundle.intake.id, mime, bytes, reason: "exif_present" });
-      return fail("That photo couldn't be added. Please retake it with your camera and try again.", 400);
+      track("intake_photo_rejected", { intake_id: access.intakeId, mime, bytes, reason: "exif_present" });
+      throw new AppError("PHOTO_INVALID", "exif present");
     }
+
+    const s = await store();
+    const existing = await s.bundleById(access.intakeId);
+    if (!existing) throw new AppError("NOT_FOUND", "intake not found");
 
     const check = checkPhoto({
       mime: inspected.mime,
@@ -81,36 +75,40 @@ export async function POST(req: Request, { params }: Params) {
       width: inspected.width,
       height: inspected.height,
       sharpness,
-      existingCount: bundle.intake.photos.length,
+      existingCount: existing.intake.photos.length,
     });
     if (!check.ok) {
-      track("intake_photo_rejected", { intake_id: bundle.intake.id, mime, bytes });
-      return fail(check.error ?? "That photo couldn't be added.", 400);
+      track("intake_photo_rejected", { intake_id: access.intakeId, mime, bytes });
+      throw new AppError("PHOTO_INVALID", check.error ?? "photo rejected");
     }
 
-    const photo: Photo = {
-      id: `pho_${Math.random().toString(36).slice(2, 12)}`,
-      kind,
+    const result = await s.attachPhoto(access.intakeId, access.practiceId, {
+      dataUrl,
       mime: inspected.mime,
       bytes,
       width: inspected.width,
       height: inspected.height,
-      dataUrl,
+      kind,
       caption,
       advisories: check.advisories,
-      at: new Date().toISOString(),
-    };
-    const saved = saveIntake({
-      ...bundle.intake,
-      photos: [...bundle.intake.photos, photo].slice(0, MAX_PHOTOS),
+      idempotencyKey,
     });
-    track("intake_photo_uploaded", {
-      intake_id: saved.id,
-      kind,
-      bytes,
-      advisories: check.advisories.length,
-      index: saved.photos.length,
+
+    if (!result.ok) {
+      if (result.reason === "frozen") throw new AppError("INTAKE_COMPLETE", "photo after submission");
+      throw new AppError("PHOTO_LIMIT_REACHED", "photo cap reached");
+    }
+
+    await audit({
+      action: "photo.uploaded",
+      actor: access.actor,
+      practiceId: access.practiceId,
+      resource: "intake",
+      resourceId: access.intakeId,
+      requestId,
+      meta: { kind, bytes, advisories: check.advisories.length },
     });
-    return json(patientView({ ...bundle, intake: saved }));
+    track("intake_photo_uploaded", { intake_id: access.intakeId, kind, bytes, advisories: check.advisories.length });
+    return jsonOk(patientView(result.bundle));
   });
 }

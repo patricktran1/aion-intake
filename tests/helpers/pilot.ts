@@ -36,8 +36,8 @@ export async function createPilotFixture(): Promise<PilotFixture> {
   const driver = await pgliteDriver();
   await migrate(driver);
   const objectRoot = await mkdtemp(join(tmpdir(), "aion-objects-"));
-  const store = new SqlStore(driver, { pepper: TEST_PEPPER });
   const objects = new LocalObjectStore(objectRoot);
+  const store = new SqlStore(driver, { pepper: TEST_PEPPER, objects });
 
   const fixture: PilotFixture = {
     driver,

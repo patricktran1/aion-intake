@@ -94,11 +94,12 @@ describe("each authorization class is actually implemented", () => {
   it("patient routes resolve the token through the store rather than trusting it", () => {
     for (const r of byClass("patient")) {
       const src = srcFor(r.path);
-      // Either the guard, or the demo-era bundleByToken lookup — both resolve
-      // the token against the store rather than treating it as a claim.
+      // The token is resolved against the store, never trusted as a claim. The
+      // patient-access helpers (resolvePatientAccess / requireVerifiedPatient)
+      // do this; requirePatient is the older guard.
       expect(
-        /requirePatient|bundleByToken|resolveToken/.test(src),
-        `${r.path} must resolve its token`,
+        /requirePatient|resolvePatientAccess|requireVerifiedPatient|resolveToken/.test(src),
+        `${r.path} must resolve its token through the store`,
       ).toBe(true);
     }
   });

@@ -1,49 +1,54 @@
-import { bundleByToken, saveIntake } from "@/lib/store";
-import { withIntakeLock } from "@/lib/store/lock";
-import { fail, json, patientView } from "@/lib/api";
-import { LIMITS, allow, intakeKey } from "@/lib/ratelimit";
+import { handle, jsonOk } from "@/lib/http";
+import { patientView } from "@/lib/api";
+import { requireVerifiedPatient } from "@/lib/patient/access";
+import { store } from "@/lib/store";
+import { LIMITS, intakeKey } from "@/lib/ratelimit";
+import { enforce } from "@/lib/ratelimit-enforce";
 import { conductTurn } from "@/lib/interview/conduct";
+import { AppError } from "@/lib/errors";
 
 type Params = { params: Promise<{ token: string }> };
 
 export async function POST(req: Request, { params }: Params) {
   const { token } = await params;
-  const found = bundleByToken(token);
-  if (!found) return fail("This intake link is no longer valid.", 404);
-  if (!allow(intakeKey(token, "intake"), LIMITS.intakeWrite)) {
-    return fail("You're going a little fast — give it a moment and try again.", 429);
-  }
-
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return fail("Could not read that message.", 400);
-  }
-  const b = (body ?? {}) as { answer?: unknown; inputMode?: unknown };
-  const answer = typeof b.answer === "string" ? b.answer.slice(0, 4000) : "";
-  const inputMode = b.inputMode === "voice" ? "voice" : "text";
-
-  // Everything that reads intake state happens inside the per-intake lock:
-  // two concurrent answers (double-tap, flaky-network retry racing its
-  // original) must apply one after the other, not both against the same
-  // snapshot — the second would silently erase the first.
-  return withIntakeLock(found.intake.id, async () => {
-    const bundle = bundleByToken(token);
-    if (!bundle) return fail("This intake link is no longer valid.", 404);
-    if (bundle.intake.status === "ready_for_review" || bundle.intake.status === "reviewed") {
-      // Duplicate submit or a stale tab. Return current state rather than erroring.
-      return json(patientView(bundle));
+  return handle(req, "POST /api/intake/[token]/message", async () => {
+    if (!(await enforce(intakeKey(token, "intake"), LIMITS.intakeWrite))) {
+      throw new AppError("RATE_LIMITED", "intake write rate exceeded");
     }
-    if (bundle.intake.status === "not_started") {
-      // A message can only follow Start — anything else is a stale tab or a
-      // hand-crafted request. Answering it would create an interview with no
-      // opening question.
-      return fail("This intake hasn't been started yet.", 409);
-    }
+    const access = await requireVerifiedPatient(token);
 
-    const result = await conductTurn({ intake: bundle.intake, answer, inputMode });
-    const saved = saveIntake(result.intake);
-    return json({ ...patientView({ ...bundle, intake: saved }), finished: result.finished });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      throw new AppError("BAD_REQUEST", "unparseable message body");
+    }
+    const b = (body ?? {}) as { answer?: unknown; inputMode?: unknown };
+    const answer = typeof b.answer === "string" ? b.answer.slice(0, 4000) : "";
+    const inputMode = b.inputMode === "voice" ? "voice" : "text";
+
+    const s = await store();
+    // The whole read-modify-write is inside withIntake: two concurrent answers
+    // (double tap, a flaky-network retry racing its original) apply one after
+    // the other, never both against the same snapshot. In pilot that is a row
+    // lock; in demo a promise chain — same guarantee either way.
+    const view = await s.withIntake(access.intakeId, async (intake) => {
+      const bundle = { ...(await s.bundleById(access.intakeId))!, intake };
+      if (intake.status === "ready_for_review" || intake.status === "reviewed") {
+        // Duplicate submit or a stale tab. Return current state, do not error.
+        return { intake: null, result: patientView(bundle) };
+      }
+      if (intake.status === "not_started") {
+        // A message can only follow Start. Answering it would create an
+        // interview with no opening question.
+        throw new AppError("INTAKE_NOT_STARTED", "message before start");
+      }
+      const turn = await conductTurn({ intake, answer, inputMode });
+      return {
+        intake: turn.intake,
+        result: { ...patientView({ ...bundle, intake: turn.intake }), finished: turn.finished },
+      };
+    });
+    return jsonOk(view);
   });
 }

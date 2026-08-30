@@ -45,7 +45,12 @@ describe("patient intake API", () => {
   it("rejects an unknown intake link without leaking whether it ever existed", async () => {
     const res = await getIntake(new Request("http://localhost/x"), params("nope"));
     expect(res.status).toBe(404);
-    expect((await res.json()).error).toBe("This intake link is no longer valid.");
+    // The message is the shared taxonomy's NOT_FOUND — a fixed, contentless
+    // string. What matters is that it does not say whether the token ever
+    // existed, and it is the same as every other not-found.
+    const body = await res.json();
+    expect(body.error).toBe("That could not be found.");
+    expect(body.code).toBe("NOT_FOUND");
   });
 
   it("starts an intake and asks the opening question", async () => {

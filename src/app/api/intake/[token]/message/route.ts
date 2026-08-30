@@ -36,7 +36,7 @@ export async function POST(req: Request, { params }: Params) {
       const bundle = { ...(await s.bundleById(access.intakeId))!, intake };
       if (intake.status === "ready_for_review" || intake.status === "reviewed") {
         // Duplicate submit or a stale tab. Return current state, do not error.
-        return { intake: null, result: patientView(bundle) };
+        return { intake: null, result: patientView(bundle, { token }) };
       }
       if (intake.status === "not_started") {
         // A message can only follow Start. Answering it would create an

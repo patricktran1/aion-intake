@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { S3ObjectStore } from "@/lib/objects/s3";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 
 /**
  * The S3 adapter, against a mock S3 endpoint.

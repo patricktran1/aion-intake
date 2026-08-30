@@ -112,6 +112,7 @@ describe("each authorization class is actually implemented", () => {
     // require having passed it) and client analytics.
     expect(byClass("public").map((r) => r.path).sort()).toEqual([
       "/api/analytics",
+      "/api/health",
       "/api/intake/[token]/verify",
     ]);
   });

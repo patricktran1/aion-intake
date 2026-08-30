@@ -79,10 +79,12 @@ export const ROUTES: RouteSpec[] = [
   },
   {
     path: "/api/intake/[token]/photos/[photoId]",
-    methods: ["DELETE"],
+    methods: ["GET", "DELETE"],
     auth: "patient",
     writes: true,
-    note: "A patient removing their own photo before submitting.",
+    note:
+      "GET streams a patient's own uploaded photo back to them for review; DELETE removes " +
+      "it before submission. Both require a verified token resolving to the owning intake.",
   },
   {
     path: "/api/intake/[token]/submit",
@@ -143,6 +145,15 @@ export const ROUTES: RouteSpec[] = [
     note:
       "Wipes and reseeds the synthetic store. 404 in pilot mode, and pilot config " +
       "refuses to start with the enabling flag set — two independent locks.",
+  },
+  {
+    path: "/api/health",
+    methods: ["GET"],
+    auth: "public",
+    writes: false,
+    note:
+      "Liveness and readiness. Reports app up and database+schema reachable, nothing else. " +
+      "No versions, hostnames, or error detail. Object storage and model are not hard deps.",
   },
   {
     path: "/api/metrics",

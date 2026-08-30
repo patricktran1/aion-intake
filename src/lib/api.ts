@@ -11,8 +11,16 @@ export const fail = (message: string, status = 400) =>
  * What the patient's browser is allowed to see. Notably absent: anything about
  * other patients, the clinician's notes, or internal slot planning.
  */
-export function patientView(bundle: IntakeBundle) {
+export function patientView(bundle: IntakeBundle, opts: { token?: string } = {}) {
   const { intake, visit, patient, practice } = bundle;
+  // In pilot mode a photo's dataUrl is the clinician-only bytes route. The
+  // patient reviews their own uploads on the same screen, so rewrite those to
+  // the token-scoped view path — the token in the URL is the patient's
+  // credential, the same one every other patient request carries.
+  const photoUrl = (dataUrl: string, id: string) =>
+    opts.token && dataUrl.startsWith("/api/intake/photo/")
+      ? `/api/intake/${opts.token}/photos/${id}`
+      : dataUrl;
   const lastAssistant = [...intake.messages].reverse().find((m) => m.role === "assistant");
   return {
     token: intake.token,
@@ -37,7 +45,7 @@ export function patientView(bundle: IntakeBundle) {
       : null,
     photos: intake.photos.map((p) => ({
       id: p.id,
-      dataUrl: p.dataUrl,
+      dataUrl: photoUrl(p.dataUrl, p.id),
       caption: p.caption,
       advisories: p.advisories,
     })),

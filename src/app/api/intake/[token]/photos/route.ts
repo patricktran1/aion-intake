@@ -109,6 +109,6 @@ export async function POST(req: Request, { params }: Params) {
       meta: { kind, bytes, advisories: check.advisories.length },
     });
     track("intake_photo_uploaded", { intake_id: access.intakeId, kind, bytes, advisories: check.advisories.length });
-    return jsonOk(patientView(result.bundle));
+    return jsonOk(patientView(result.bundle, { token }));
   });
 }

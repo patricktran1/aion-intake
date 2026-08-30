@@ -263,6 +263,73 @@ describe("a patient's answers reach the durable store", () => {
   });
 });
 
+describe("a patient can view their own photo but not another intake's", () => {
+  const LIVE_DOB = "2007-02-18";
+
+  async function uploadOne(token: string): Promise<string> {
+    const { POST } = await import("@/app/api/intake/[token]/photos/route");
+    await POST(
+      new Request(`http://aion.test/api/intake/${token}/photos`, {
+        method: "POST",
+        headers: { "content-type": "application/json", host: "aion.test" },
+        body: JSON.stringify({ dataUrl: jpegDataUrl(1200, 1600), kind: "close" }),
+      }),
+      { params: Promise.resolve({ token }) },
+    );
+    const { rows } = await f.driver.query<{ id: string }>(
+      "SELECT id FROM photos WHERE intake_id = $1 ORDER BY uploaded_at DESC LIMIT 1",
+      [intakeIdFor(f.seed, "live")],
+    );
+    return rows[0].id;
+  }
+
+  it("serves the bytes to the owning patient, and refuses another intake's photo", async () => {
+    const token = tokenFor(f.seed, "live");
+    await verify(token, LIVE_DOB);
+    await start(token);
+    await answer(token, "A dark spot on my shoulder");
+    const photoId = await uploadOne(token);
+
+    const { GET } = await import("@/app/api/intake/[token]/photos/[photoId]/route");
+    const mine = await GET(
+      new Request(`http://aion.test/api/intake/${token}/photos/${photoId}`, { headers: { host: "aion.test" } }),
+      { params: Promise.resolve({ token, photoId }) },
+    );
+    expect(mine.status).toBe(200);
+    expect(mine.headers.get("content-type")).toBe("image/jpeg");
+    expect(mine.headers.get("cache-control")).toMatch(/no-store/);
+    expect(Buffer.from(await mine.arrayBuffer())[0]).toBe(0xff);
+
+    // A different patient's token must not fetch this photo, even by id.
+    const otherToken = tokenFor(f.seed, "active");
+    await verify(otherToken, "1991-04-12");
+    const stolen = await GET(
+      new Request(`http://aion.test/api/intake/${otherToken}/photos/${photoId}`, { headers: { host: "aion.test" } }),
+      { params: Promise.resolve({ token: otherToken, photoId }) },
+    );
+    expect(stolen.status).toBe(404);
+  });
+
+  it("the patient view rewrites photo URLs to the token-scoped path", async () => {
+    const token = tokenFor(f.seed, "live");
+    await verify(token, LIVE_DOB);
+    await start(token);
+    await answer(token, "A spot on my arm");
+    await uploadOne(token);
+
+    const { GET } = await import("@/app/api/intake/[token]/route");
+    const res = await GET(
+      new Request(`http://aion.test/api/intake/${token}`, { headers: { host: "aion.test" } }),
+      { params: Promise.resolve({ token }) },
+    );
+    const view = await res.json();
+    expect(view.photos).toHaveLength(1);
+    // The patient's own token, not the clinician-only bytes route.
+    expect(view.photos[0].dataUrl).toBe(`/api/intake/${token}/photos/${view.photos[0].id}`);
+    expect(view.photos[0].dataUrl).not.toContain("/api/intake/photo/");
+  });
+});
+
 describe("the patient journey is audited", () => {
   it("records verification, start, submission — and no clinical content", async () => {
     const token = tokenFor(f.seed, "live");

@@ -20,6 +20,6 @@ export async function GET(req: Request, { params }: Params) {
     const access = await resolvePatientAccess(token);
     const bundle = await patientBundle(access.intakeId);
     track("intake_opened", { intake_id: bundle.intake.id, status: bundle.intake.status });
-    return jsonOk({ ...patientView(bundle), requiresVerification: !access.verified });
+    return jsonOk({ ...patientView(bundle, { token }), requiresVerification: !access.verified });
   });
 }

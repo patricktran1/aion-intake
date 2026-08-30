@@ -49,7 +49,40 @@ export interface MigrateResult {
   alreadyApplied: string[];
 }
 
+/**
+ * A fixed key for the session-level advisory lock. Two app instances starting
+ * at once must not both run migrations: the second would race the first's DDL
+ * and could apply a migration onto a half-built schema. The lock serialises
+ * them, so the second waits, then finds every migration already applied and
+ * does nothing. Any 64-bit constant works as long as it is the same everywhere.
+ */
+const MIGRATION_LOCK_KEY = 4_921_071_004_611_002; // "AION-DDL" as a stable number
+
 export async function migrate(driver: Driver, dir?: string): Promise<MigrateResult> {
+  // pg_advisory_lock blocks until the lock is free; a second instance waits
+  // here rather than racing the DDL. PGlite is single-connection so it no-ops
+  // the function harmlessly (it is not present), which is why the call is
+  // guarded — the lock matters only on real multi-instance Postgres.
+  const locked = await acquireLock(driver);
+  try {
+    return await runMigrations(driver, dir);
+  } finally {
+    if (locked) await driver.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]).catch(() => undefined);
+  }
+}
+
+async function acquireLock(driver: Driver): Promise<boolean> {
+  try {
+    await driver.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
+    return true;
+  } catch {
+    // PGlite has no advisory locks; it is single-connection, so there is
+    // nothing to serialise against anyway.
+    return false;
+  }
+}
+
+async function runMigrations(driver: Driver, dir?: string): Promise<MigrateResult> {
   await driver.query(LEDGER);
   const { rows } = await driver.query<{ name: string; checksum: string }>(
     "SELECT name, checksum FROM schema_migrations",

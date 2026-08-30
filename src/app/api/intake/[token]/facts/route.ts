@@ -55,7 +55,7 @@ export async function PATCH(req: Request, { params }: Params) {
       }
       const saved = { ...intake, facts };
       track("intake_review_edited", { intake_id: saved.id, slot, cleared: value.length === 0 });
-      return { intake: saved, result: patientView({ ...bundle, intake: saved }) };
+      return { intake: saved, result: patientView({ ...bundle, intake: saved }, { token }) };
     });
     return jsonOk(view);
   });

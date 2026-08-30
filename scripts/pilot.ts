@@ -300,11 +300,53 @@ async function cmdRetention(): Promise<number> {
   }
 }
 
+async function cmdBackup(): Promise<number> {
+  const { dumpDatabase } = await import("@/lib/db/backup");
+  const { writeFileSync } = await import("node:fs");
+  const driver = await openDriver();
+  try {
+    const out = args.find((a) => a.startsWith("--out="))?.slice("--out=".length) ?? "backup.json";
+    const backup = await dumpDatabase(driver, new Date(0).toISOString());
+    // Stamp the time outside the workflow-free path; Date is available in scripts.
+    backup.takenAt = new Date().toISOString();
+    const total = Object.values(backup.tables).reduce((n, rows) => n + rows.length, 0);
+    writeFileSync(out, JSON.stringify(backup, null, 2));
+    console.log(green(`Wrote ${total} rows across ${Object.keys(backup.tables).length} tables to ${out}`));
+    console.log(yellow("This is a LOGICAL dump for rehearsal. Production backup is the provider's PITR — see PILOT_SETUP.md."));
+    return 0;
+  } finally {
+    await driver.close();
+  }
+}
+
+async function cmdRestore(): Promise<number> {
+  if (!has("--confirm")) {
+    console.error(red("Refusing to restore without --confirm.") + "\nThis REPLACES all application data with the backup's contents.");
+    return 1;
+  }
+  const { restoreDatabase } = await import("@/lib/db/backup");
+  const { readFileSync } = await import("node:fs");
+  const file = args.find((a) => a.startsWith("--in="))?.slice("--in=".length) ?? "backup.json";
+  const driver = await openDriver();
+  try {
+    await migrate(driver);
+    const backup = JSON.parse(readFileSync(file, "utf8"));
+    const { rows } = await restoreDatabase(driver, backup);
+    console.log(green(`Restored ${rows} rows from ${file} (taken ${backup.takenAt}).`));
+    console.log(yellow("Reconcile object storage to the same point — see ROLLBACK.md."));
+    return 0;
+  } finally {
+    await driver.close();
+  }
+}
+
 const COMMANDS: Record<string, () => Promise<number>> = {
   migrate: cmdMigrate,
   seed: cmdSeed,
   check: cmdCheck,
   retention: cmdRetention,
+  backup: cmdBackup,
+  restore: cmdRestore,
 };
 
 async function main() {

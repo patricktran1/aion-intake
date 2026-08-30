@@ -23,7 +23,7 @@ lifecycle state (live, active, submitted, expired, revoked, reviewed) across
 two practices.
 
 ```bash
-npm test                     # 878 tests
+npm test                     # 900+ tests
 npx vitest run tests/pilot-  # the pilot suites specifically
 npm run pilot:check          # technical readiness
 npm run smoke                # repository-level security checks
@@ -122,8 +122,23 @@ load-bearing rather than decorative.
 
 **Where we think this is weakest:** it is enforced in application code, not by
 Postgres row-level security. A future query written without the clause would
-compile and pass most tests. RLS with a per-request role would move the
-guarantee into the database; it is not built.
+compile and pass most tests.
+
+**RLS decision (evidence-based, revisit at scale).** We evaluated row-level
+security and chose not to implement it *yet*. For: it is genuine
+defense-in-depth — a query that forgot its practice filter would return nothing
+instead of another tenant's rows. Against: RLS requires every pooled connection
+to set a per-request tenant context (`SET app.practice_id`) before each query,
+which is itself a new thing to get wrong (a forgotten SET fails open or closed
+depending on the policy, and a connection pool makes leakage of that context
+across requests a fresh failure mode); it complicates the migration and test
+story; and the query surface it would protect is small and already
+mutation-tested (deleting the one WHERE clause turns `tests/pilot-isolation`
+red). At 5–20 clinicians the operational risk of the tenant-context plumbing is
+not clearly smaller than the risk it removes. The decision is to keep
+application isolation, keep it mutation-tested, and add RLS as defense-in-depth
+when the query surface or the tenant count grows. This is a documented choice,
+not an oversight.
 
 ---
 
@@ -170,6 +185,14 @@ implementations rather than a fake that would agree with whatever the code does.
 
 Photo uploads carry an idempotency key with a partial unique index, so a retry
 cannot create a second photo.
+
+Every patient and clinician write route goes through `store.withIntake` — a
+row lock in pilot, a promise chain in demo. This was not always true: an
+earlier version resolved tokens and saved intakes through the in-memory helpers
+directly, so in pilot mode patient answers and clinician edits went to process
+memory and 404'd or vanished. `tests/pilot-patient-flow` and
+`tests/pilot-rehearsal` read straight from Postgres to prove every write now
+lands there.
 
 ---
 

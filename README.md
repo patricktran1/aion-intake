@@ -144,6 +144,8 @@ scripts/
 | `PRIVACY_MAP.md` | Where patient information can be, in each mode |
 | `SECURITY_REVIEW_PACKET.md` | For an independent reviewer: architecture, and where to attack |
 | `PILOT_SETUP.md` | Zero to a running pilot environment with synthetic data |
+| `RUNBOOK.md` | First moves when something breaks during a pilot |
+| `ROLLBACK.md` | App rollback, and migration rules that keep it possible |
 | `EVALS.md` | The evaluation lab: how the interview is measured |
 | `GOLDEN_SET.md` | The 49 hand-reviewed cases and what each one protects |
 | `MODEL_EVAL.md` | Model vs deterministic, per stage — and what is still unmeasured |

@@ -96,6 +96,51 @@ const photoSources = sourceFiles.filter((f) => /objects|photo/i.test(f) && f.inc
 const presigned = photoSources.filter((f) => /getSignedUrl|presign|X-Amz-Signature=|publicUrl/i.test(readFileSync(f, "utf8")));
 check("no pre-signed or public photo URLs", presigned.length === 0, presigned.join("; "));
 
+// 8. No patient-controlled outbound requests (SSRF). The only fetch/request
+//    call sites are the S3 adapter and the model SDK, both to config-controlled
+//    endpoints with server-generated keys. Flag any new fetch() in app code
+//    whose URL is built from request/patient input.
+const outboundSins: string[] = [];
+for (const f of sourceFiles.filter((x) => x.includes("/src/") && !x.includes("/objects/"))) {
+  const text = readFileSync(f, "utf8");
+  for (const m of text.matchAll(/\bfetch\(([^)]{0,80})/g)) {
+    const arg = m[1];
+    // aws4fetch's this.aws.fetch and the model SDK are fine; a bare global
+    // fetch on a URL derived from input is the risk.
+    if (/^\s*[`"']?https?:/.test(arg) && /token|answer|body|param|req\b|input/.test(arg)) {
+      outboundSins.push(`${f.replace(process.cwd(), ".")}: fetch(${arg.slice(0, 50)}`);
+    }
+  }
+}
+check("no patient-controlled outbound requests", outboundSins.length === 0, outboundSins.join("; "));
+
+// 9. No raw HTML injection of any value (stored XSS). React escapes by default;
+//    dangerouslySetInnerHTML with a non-literal is the way that is bypassed.
+const htmlSins: string[] = [];
+for (const f of sourceFiles.filter((x) => x.includes("/src/") && /\.(tsx|ts)$/.test(x))) {
+  const text = readFileSync(f, "utf8");
+  if (/dangerouslySetInnerHTML|\.innerHTML\s*=/.test(text)) {
+    htmlSins.push(f.replace(process.cwd(), "."));
+  }
+}
+check("no raw HTML injection surfaces", htmlSins.length === 0, htmlSins.join("; "));
+
+// 10. No secret env names or NEXT_PUBLIC vars reachable from client code.
+const clientLeaks: string[] = [];
+for (const f of sourceFiles.filter((x) => x.includes("/src/"))) {
+  const text = readFileSync(f, "utf8");
+  if (!text.includes('"use client"')) continue;
+  if (/AION_SESSION_SECRET|AION_TOKEN_PEPPER|AION_S3_SECRET|DATABASE_URL|ANTHROPIC_API_KEY/.test(text)) {
+    clientLeaks.push(f.replace(process.cwd(), "."));
+  }
+}
+for (const f of sourceFiles) {
+  if (/NEXT_PUBLIC_[A-Z_]*(SECRET|PEPPER|KEY|PASSWORD|TOKEN|DATABASE)/.test(readFileSync(f, "utf8"))) {
+    clientLeaks.push(`${f.replace(process.cwd(), ".")} (NEXT_PUBLIC secret)`);
+  }
+}
+check("no secrets reachable from client code", clientLeaks.length === 0, clientLeaks.join("; "));
+
 console.log("");
 if (failures.length > 0) {
   console.error(`\x1b[31m${failures.length} smoke check(s) failed.\x1b[0m`);

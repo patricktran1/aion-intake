@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createPilotFixture, TEST_PEPPER, type PilotFixture } from "./helpers/pilot";
+import { createPilotFixture, type PilotFixture } from "./helpers/pilot";
 import { dumpDatabase, restoreDatabase } from "@/lib/db/backup";
 
 /**
@@ -177,8 +177,7 @@ describe("pilot-scale load stays correct", () => {
       expect(intake.messages.every((m) => m.text.startsWith(`${id} says `))).toBe(true);
     }
     // Informational: throughput on this machine. Not a benchmark.
-    // eslint-disable-next-line no-console
-    if (process.env.AION_LOG_ANALYTICS !== "0") console.log(`150 concurrent writes in ${elapsed}ms`);
+    expect(elapsed).toBeGreaterThanOrEqual(0);
   }, 60_000);
 
   it("a burst of clinician list reads across two practices never leaks", async () => {

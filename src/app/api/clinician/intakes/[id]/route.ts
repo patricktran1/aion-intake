@@ -1,8 +1,9 @@
-import { bundleById, saveIntake, store } from "@/lib/store";
-import { withIntakeLock } from "@/lib/store/lock";
+import { store } from "@/lib/store";
 import { clinicianWriteScope } from "@/lib/auth/scope";
 import { fail, json } from "@/lib/api";
 import { handle } from "@/lib/http";
+import { AppError } from "@/lib/errors";
+import { audit } from "@/lib/audit";
 import { MAX_REVIEW_FIELD, clinicianReviewSchema } from "@/lib/domain/types";
 import { track } from "@/lib/analytics";
 
@@ -12,20 +13,24 @@ type Params = { params: Promise<{ id: string }> };
  * Clinician edits. The HPI and the review fields are the only writable surface —
  * patient-supplied facts are never overwritten from this side, so provenance in
  * the brief stays true.
+ *
+ * The whole read-modify-write goes through store.withIntake, so it is durable
+ * in pilot mode and serialised against a second clinician (or a second tab)
+ * editing the same brief — a row lock in pilot, a promise chain in demo.
  */
 export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
-  return handle(req, "PATCH /api/clinician/intakes/[id]", async () => {
-    // The tenant check happens before anything is read or written. In pilot mode
-    // an intake belonging to another practice is indistinguishable from one that
-    // does not exist.
+  return handle(req, "PATCH /api/clinician/intakes/[id]", async ({ requestId }) => {
     const scope = await clinicianWriteScope(req);
-    if (scope.practiceId) {
-      const s = await store();
-      if (!(await s.bundleForClinician(id, scope.practiceId))) return fail("Intake not found.", 404);
-    } else if (!bundleById(id)) {
-      return fail("Intake not found.", 404);
-    }
+    const s = await store();
+    // Existence-and-tenant check before any write: scoped to the practice when
+    // we have one (pilot), unscoped in demo's single synthetic practice. Either
+    // way an unknown or other-practice intake is a 404, never a 500 from the
+    // write path.
+    const found = scope.practiceId
+      ? await s.bundleForClinician(id, scope.practiceId)
+      : await s.bundleById(id);
+    if (!found) return fail("Intake not found.", 404);
 
     let body: unknown;
     try {
@@ -35,19 +40,12 @@ export async function PATCH(req: Request, { params }: Params) {
     }
     const b = (body ?? {}) as { hpi?: unknown; review?: unknown };
 
-    // Two clinicians (or two tabs) editing the same intake must not overwrite
-    // each other's HPI wholesale: each PATCH re-reads under the lock.
-    return withIntakeLock(id, async () => {
-      const bundle = bundleById(id);
-      if (!bundle) return fail("Intake not found.", 404);
-
-      let intake = bundle.intake;
+    const result = await s.withIntake(id, async (current) => {
+      let intake = current;
       if (typeof b.hpi === "string") {
         const hpi = b.hpi.slice(0, 20000);
         const edited = hpi.trim() !== intake.hpiGenerated.trim();
-        if (edited && !intake.hpiEditedByClinician) {
-          track("clinician_hpi_edited", { intake_id: intake.id });
-        }
+        if (edited && !intake.hpiEditedByClinician) track("clinician_hpi_edited", { intake_id: intake.id });
         intake = { ...intake, hpi, hpiEditedByClinician: edited };
       }
       if (b.review && typeof b.review === "object") {
@@ -59,19 +57,12 @@ export async function PATCH(req: Request, { params }: Params) {
             typeof v === "string" ? v.slice(0, MAX_REVIEW_FIELD) : v,
           ]),
         );
-        const parsed = clinicianReviewSchema.safeParse({
-          ...intake.review,
-          ...incoming,
-        });
-        if (!parsed.success) return fail("Invalid review fields.", 400);
-        // "reviewed" is a state a submitted intake moves into — never a jump from
-        // not_started/in_progress, which would hide an unfinished intake from the
-        // patient while the clinician thinks it is done.
-        if (
-          intake.status !== "ready_for_review" &&
-          intake.status !== "reviewed"
-        ) {
-          return fail("This intake has not been submitted yet.", 409);
+        const parsed = clinicianReviewSchema.safeParse({ ...intake.review, ...incoming });
+        if (!parsed.success) throw new AppError("BAD_REQUEST", "invalid review fields");
+        // "reviewed" is a state a submitted intake moves into — never a jump
+        // from not_started/in_progress.
+        if (intake.status !== "ready_for_review" && intake.status !== "reviewed") {
+          throw new AppError("INTAKE_NOT_STARTED", "review before submission");
         }
         intake = {
           ...intake,
@@ -79,13 +70,20 @@ export async function PATCH(req: Request, { params }: Params) {
           status: "reviewed",
         };
       }
-      const saved = saveIntake(intake);
-      return json({
-        ok: true,
-        hpi: saved.hpi,
-        review: saved.review,
-        status: saved.status,
-      });
+      return {
+        intake,
+        result: { ok: true, hpi: intake.hpi, review: intake.review, status: intake.status },
+      };
     });
+
+    await audit({
+      action: b.review ? "review.updated" : "hpi.edited",
+      actor: scope.actor,
+      practiceId: scope.practiceId,
+      resource: "intake",
+      resourceId: id,
+      requestId,
+    });
+    return json(result);
   });
 }

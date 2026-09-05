@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { handle, jsonOk } from "@/lib/http";
+import { handle, jsonOk, readJson } from "@/lib/http";
 import { AppError } from "@/lib/errors";
 import { requirePilotMode } from "@/lib/auth/guard";
 import { pilotConfig } from "@/lib/config/runtime";
@@ -22,12 +22,7 @@ export async function POST(req: Request) {
   return handle(req, "POST /api/auth/login", async ({ requestId }) => {
     requirePilotMode();
 
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      throw new AppError("BAD_REQUEST", "unparseable login body");
-    }
+    const body = await readJson(req);
     const b = (body ?? {}) as { email?: unknown; password?: unknown };
     const email = typeof b.email === "string" ? b.email.trim().slice(0, 200) : "";
     const password = typeof b.password === "string" ? b.password.slice(0, 400) : "";

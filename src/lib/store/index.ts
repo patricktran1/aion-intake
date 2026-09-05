@@ -39,9 +39,26 @@ const globalForStore = globalThis as unknown as { __aionStore?: Store };
  * Builds the pilot store. `pg` is imported lazily and only here, so a demo
  * deployment never loads a database driver it will not use — and so a missing
  * `pg` install cannot break the demo.
+ *
+ * Two schemes, because config accepts two. `pglite:<dir>` is in-process
+ * Postgres for local development; anything else is a connection string for a
+ * `pg` pool. This used to build a pool unconditionally, which meant the
+ * documented local pilot (`npm run dev:pilot`) started a server whose every
+ * request failed with STORE_UNAVAILABLE: the pool tried to resolve
+ * "pglite:.pglite" as a host. Nothing caught it because every pilot test
+ * constructs SqlStore directly and none of them went through `store()`.
  */
 async function buildSqlStore(): Promise<Store> {
   const cfg = pilotConfig();
+  if (cfg.localDatabase) {
+    const { pgliteDriver } = await import("@/lib/db/pglite");
+    const { objectStore } = await import("@/lib/objects/select");
+    const dir = cfg.databaseUrl.slice("pglite:".length) || ".pglite";
+    return new SqlStore(await pgliteDriver(dir), {
+      pepper: cfg.tokenPepper,
+      objects: await objectStore(),
+    });
+  }
   const { Pool } = await import("pg");
   const pool = new Pool({ connectionString: cfg.databaseUrl, max: 10 });
   const { driverFrom } = await import("@/lib/db/driver");

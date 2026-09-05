@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { isPilot } from "@/lib/config/runtime";
 import { Brand } from "@/components/Brand";
 import { CONFERENCE_CASE } from "@/lib/demo/seed";
 import { listBundles } from "@/lib/store";
@@ -17,6 +19,12 @@ export const dynamic = "force-dynamic";
  * instead. See DEMO.md for the scripts.
  */
 export default function DemoPage() {
+  // The reset API was already refused in pilot mode; this page was not, so a
+  // pilot deployment served an unauthenticated founder control panel reading
+  // the (empty) demo store. Mode is a property of the deployment, so the whole
+  // surface goes away rather than individual buttons being disabled.
+  if (isPilot()) notFound();
+
   const bundles = listBundles();
   const conference = bundles.find((b) => b.intake.token === CONFERENCE_CASE.token);
   const completed = bundles.filter(

@@ -79,3 +79,63 @@ export function require(condition: unknown, code: ConstructorParameters<typeof A
 }
 
 export const jsonOk = <T>(data: T, status = 200) => NextResponse.json(data, { status });
+
+/**
+ * Default cap on a JSON request body.
+ *
+ * Generous next to the largest legitimate one — a 4,000-character answer plus
+ * its envelope — and far below what an unbounded `req.json()` will happily
+ * pull into memory. The photo route sets its own, larger limit.
+ */
+export const MAX_JSON_BODY_BYTES = 64 * 1024;
+
+/**
+ * Parses a JSON body with a size ceiling.
+ *
+ * `await req.json()` reads whatever arrives. Every write route called it
+ * directly, so a single request could allocate as much memory as a client was
+ * willing to send — the smallest denial of service there is, and one that
+ * needs no authentication because the parse happens before any check that
+ * could reject it. Content-Length is checked first when present, and the
+ * stream is measured as it arrives for the chunked case where it is not.
+ */
+export async function readJson(req: Request, maxBytes = MAX_JSON_BODY_BYTES): Promise<unknown> {
+  const declared = Number(req.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new AppError("PAYLOAD_TOO_LARGE", `declared ${declared} bytes over ${maxBytes}`);
+  }
+
+  const body = req.body;
+  let text: string;
+  if (!body) {
+    text = await req.text();
+    if (Buffer.byteLength(text) > maxBytes) {
+      throw new AppError("PAYLOAD_TOO_LARGE", "body over limit");
+    }
+  } else {
+    // A declared length can lie, and a chunked request declares none. Count
+    // the bytes as they arrive and abandon the read the moment it goes over,
+    // rather than buffering the whole thing and then measuring it.
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new AppError("PAYLOAD_TOO_LARGE", `over ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+    text = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8");
+  }
+
+  if (text.trim() === "") return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AppError("BAD_REQUEST", "unparseable JSON body");
+  }
+}

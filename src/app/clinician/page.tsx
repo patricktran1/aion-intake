@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Brand } from "@/components/Brand";
-import { listBundles } from "@/lib/store";
+import { listBundles, store } from "@/lib/store";
 import { listRow } from "@/lib/api";
 import { PATHWAY_LABELS } from "@/lib/domain/types";
+import { isPilot } from "@/lib/config/runtime";
+import { requireClinician } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -39,8 +42,40 @@ function relativeDay(iso: string): { label: string; soon: boolean } {
   };
 }
 
-export default function ClinicianList() {
-  const rows = listBundles().map(listRow);
+/**
+ * The worklist.
+ *
+ * In pilot mode this page had no authentication and no tenant scoping: it
+ * called `listBundles()` with no practice id, against the in-memory demo store.
+ * It rendered empty, so it leaked nothing — but it was one data-source change
+ * away from serving every practice's patients, and their access links, to any
+ * anonymous visitor. The "Open link" column is a demo affordance for exactly
+ * that reason and does not exist in pilot: a patient's link is delivered to the
+ * patient, never displayed on a clinician's screen.
+ */
+export default async function ClinicianList() {
+  let rows: ReturnType<typeof listRow>[];
+  let heading = "Lakeview Dermatology · Dr. A. Sandoval";
+  let dataLabel = "Synthetic demo data";
+  let pilot = false;
+
+  if (isPilot()) {
+    pilot = true;
+    // A page cannot throw a 401 usefully, so an unauthenticated visitor is sent
+    // to sign in rather than shown an error.
+    const ctx = await requireClinician().catch(() => null);
+    if (!ctx) redirect("/clinician/sign-in");
+    const s = await store();
+    // Scoped in the query. The practice id comes from the signed session and
+    // never from the URL.
+    const bundles = await s.listBundles(ctx.practiceId);
+    rows = bundles.map((b) => listRow(b));
+    heading = `${bundles[0]?.practice.name ?? "Your practice"} · ${ctx.displayName}${ctx.credential ? `, ${ctx.credential}` : ""}`;
+    dataLabel = "";
+  } else {
+    rows = listBundles().map(listRow);
+  }
+
   const ready = rows.filter((r) => r.status === "ready_for_review");
 
   return (
@@ -51,9 +86,9 @@ export default function ClinicianList() {
             <Link href="/">
               <Brand size="sm" />
             </Link>
-            <span className="text-sm text-muted">Lakeview Dermatology · Dr. A. Sandoval</span>
+            <span className="text-sm text-muted">{heading}</span>
           </div>
-          <span className="text-xs text-muted">Synthetic demo data</span>
+          {dataLabel && <span className="text-xs text-muted">{dataLabel}</span>}
         </div>
       </header>
 
@@ -135,6 +170,12 @@ export default function ClinicianList() {
                         >
                           Review
                         </Link>
+                      ) : pilot ? (
+                        // No link. The patient's token is the patient's
+                        // credential; putting it on this screen would make every
+                        // clinician's browser history a list of live patient
+                        // links.
+                        <span className="text-[14px] text-muted">Awaiting patient</span>
                       ) : (
                         <Link
                           href={`/intake/${r.token}`}

@@ -192,6 +192,7 @@ describe("the four partial-failure orderings", () => {
     expect(await store.sweepPendingDeletions()).toEqual({ swept: 0, failed: 0 });
     expect(await store.sweepPendingDeletions()).toEqual({ swept: 0, failed: 0 });
     expect(await owed()).toEqual([]);
+    expect(await f.objects.exists(key)).toBe(false);
   });
 });
 

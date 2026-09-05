@@ -9,17 +9,24 @@ type Params = { params: Promise<{ token: string }> };
  * The patient's own view of their intake.
  *
  * Resolves the token through the configured store — the demo's memory adapter
- * or the pilot's Postgres — so this is the same code in both modes. It does NOT
- * require the second factor: the patient has to be able to load the page in
- * order to pass it. The response carries `requiresVerification` so the UI shows
- * the prompt or the interview accordingly.
+ * or the pilot's Postgres — so this is the same code in both modes.
+ *
+ * Before the second factor is passed this returns `requiresVerification` and
+ * NOTHING ELSE. It used to return the whole record alongside that flag, on the
+ * reasoning that the patient must be able to load the page in order to pass
+ * the factor. But the page only needs to know *that* a factor is required; the
+ * record is not needed to render a prompt. Returning it meant one curl against
+ * a forwarded link read the entire dermatology intake — name, answers,
+ * photographs — with the factor guarding writes alone. The factor is supposed
+ * to mean holding the link is not enough, and this is where that was decided.
  */
 export async function GET(req: Request, { params }: Params) {
   const { token } = await params;
   return handle(req, "GET /api/intake/[token]", async () => {
     const access = await resolvePatientAccess(token);
+    if (!access.verified) return jsonOk({ requiresVerification: true });
     const bundle = await patientBundle(access.intakeId);
     track("intake_opened", { intake_id: bundle.intake.id, status: bundle.intake.status });
-    return jsonOk({ ...patientView(bundle, { token }), requiresVerification: !access.verified });
+    return jsonOk({ ...patientView(bundle, { token }), requiresVerification: false });
   });
 }

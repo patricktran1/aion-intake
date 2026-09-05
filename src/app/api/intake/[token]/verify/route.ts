@@ -1,4 +1,4 @@
-import { handle, jsonOk } from "@/lib/http";
+import { handle, jsonOk, readJson } from "@/lib/http";
 import { AppError } from "@/lib/errors";
 import { store } from "@/lib/store";
 import { MAX_VERIFICATION_ATTEMPTS } from "@/lib/patient/token";
@@ -70,12 +70,7 @@ export async function POST(req: Request, { params }: Params) {
     // a conference demo is not gated on a synthetic patient's date of birth.
     if (!isPilot()) return jsonOk({ verified: true });
 
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      throw new AppError("BAD_REQUEST", "unparseable verification body");
-    }
+    const body = await readJson(req);
     // One field on the wire whatever the configured factor is. `dateOfBirth`
     // stays accepted as the field name so links and clients issued before the
     // factor became pluggable keep working.

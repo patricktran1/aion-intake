@@ -1,4 +1,5 @@
 import { fail, json } from "@/lib/api";
+import { readJson } from "@/lib/http";
 import { track, type AnalyticsEvent } from "@/lib/analytics";
 
 /**
@@ -12,9 +13,11 @@ const CLIENT_EVENTS: AnalyticsEvent[] = [
 ];
 
 export async function POST(req: Request) {
+  // Unauthenticated, so the cap matters more here than anywhere: this is the
+  // one write surface reachable with no credential at all.
   let body: unknown;
   try {
-    body = await req.json();
+    body = await readJson(req, 4 * 1024);
   } catch {
     return fail("bad_request", 400);
   }

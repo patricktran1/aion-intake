@@ -225,7 +225,6 @@ export interface OtpDelivery {
 export const consoleOtpDelivery: OtpDelivery = {
   kind: "console",
   async send(to, code) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[aion] SYNTHETIC OTP DELIVERY — no message was sent. intake=${to.intakeId} code=${code}\n` +
         "        This adapter exists for local development. Do not run a real pilot on it.",

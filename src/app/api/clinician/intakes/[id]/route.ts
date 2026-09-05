@@ -1,7 +1,7 @@
 import { store } from "@/lib/store";
 import { clinicianWriteScope } from "@/lib/auth/scope";
 import { fail, json } from "@/lib/api";
-import { handle } from "@/lib/http";
+import { handle, readJson } from "@/lib/http";
 import { AppError } from "@/lib/errors";
 import { audit } from "@/lib/audit";
 import { MAX_REVIEW_FIELD, clinicianReviewSchema } from "@/lib/domain/types";
@@ -32,13 +32,18 @@ export async function PATCH(req: Request, { params }: Params) {
       : await s.bundleById(id);
     if (!found) return fail("Intake not found.", 404);
 
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      return fail("Could not read that update.", 400);
-    }
+    const body = await readJson(req);
     const b = (body ?? {}) as { hpi?: unknown; review?: unknown };
+    // A body carrying neither writable field used to return 200, change
+    // nothing, and append an audit event claiming the HPI had been edited. An
+    // audit trail that records edits which never happened is worse than none,
+    // and a client sending the wrong field name got no signal that its write
+    // had gone nowhere.
+    const writesHpi = typeof b.hpi === "string";
+    const writesReview = Boolean(b.review) && typeof b.review === "object";
+    if (!writesHpi && !writesReview) {
+      throw new AppError("BAD_REQUEST", "update must carry hpi or review");
+    }
 
     const result = await s.withIntake(id, async (current) => {
       let intake = current;

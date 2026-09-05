@@ -1,4 +1,4 @@
-import { handle, jsonOk } from "@/lib/http";
+import { handle, jsonOk, readJson } from "@/lib/http";
 import { patientView } from "@/lib/api";
 import { requireVerifiedPatient } from "@/lib/patient/access";
 import { store } from "@/lib/store";
@@ -23,12 +23,7 @@ export async function PATCH(req: Request, { params }: Params) {
     }
     const access = await requireVerifiedPatient(token);
 
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      throw new AppError("BAD_REQUEST", "unparseable edit body");
-    }
+    const body = await readJson(req);
     const b = (body ?? {}) as { slot?: unknown; value?: unknown };
     const slot = typeof b.slot === "string" ? b.slot : "";
     const value = typeof b.value === "string" ? b.value.trim().slice(0, 1000) : "";

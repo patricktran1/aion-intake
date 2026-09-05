@@ -2,7 +2,7 @@
   "name": "aion-intake",
   "version": "0.1.0",
   "private": true,
-  "description": "AION Intake \u2014 pre-visit intelligence for dermatology.",
+  "description": "AION Intake — pre-visit intelligence for dermatology.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -31,7 +31,8 @@
     "db:backup": "tsx scripts/pilot.ts backup",
     "db:restore": "tsx scripts/pilot.ts restore",
     "retention:dry": "tsx scripts/pilot.ts retention",
-    "security:smoke": "tsx scripts/smoke.ts"
+    "security:smoke": "tsx scripts/smoke.ts",
+    "attack": "tsx scripts/attack.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

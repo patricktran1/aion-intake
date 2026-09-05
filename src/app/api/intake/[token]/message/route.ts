@@ -1,4 +1,4 @@
-import { handle, jsonOk } from "@/lib/http";
+import { handle, jsonOk, readJson } from "@/lib/http";
 import { patientView } from "@/lib/api";
 import { requireVerifiedPatient } from "@/lib/patient/access";
 import { store } from "@/lib/store";
@@ -17,14 +17,18 @@ export async function POST(req: Request, { params }: Params) {
     }
     const access = await requireVerifiedPatient(token);
 
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      throw new AppError("BAD_REQUEST", "unparseable message body");
-    }
+    const body = await readJson(req);
     const b = (body ?? {}) as { answer?: unknown; inputMode?: unknown };
-    const answer = typeof b.answer === "string" ? b.answer.slice(0, 4000) : "";
+    // An ABSENT `answer` is a bad request; an EMPTY one is the "Skip this one"
+    // button and is legitimate. Coercing both to "" accepted any body shape
+    // with a 200 and recorded a blank answer, advancing the interview past the
+    // question — so a client bug or a mangled request produced an intake that
+    // looked completed and said nothing, and the clinician had no way to tell
+    // that apart from a patient who genuinely skipped everything.
+    if (!("answer" in b) || typeof b.answer !== "string") {
+      throw new AppError("BAD_REQUEST", "message body must carry an answer string");
+    }
+    const answer = b.answer.slice(0, 4000);
     const inputMode = b.inputMode === "voice" ? "voice" : "text";
 
     const s = await store();

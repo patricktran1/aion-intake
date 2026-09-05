@@ -25,6 +25,7 @@ export const ERROR_CODES = [
   "PHOTO_INVALID",
   "PHOTO_TOO_LARGE",
   "PHOTO_LIMIT_REACHED",
+  "PAYLOAD_TOO_LARGE",
   "RATE_LIMITED",
   "BAD_REQUEST",
   "MODEL_TIMEOUT",
@@ -85,6 +86,7 @@ const SPECS: Record<ErrorCode, Spec> = {
     retryable: false,
   },
   PHOTO_LIMIT_REACHED: { status: 409, message: "You've added the maximum number of photos.", retryable: false },
+  PAYLOAD_TOO_LARGE: { status: 413, message: "That request was too large to accept.", retryable: false },
   RATE_LIMITED: {
     status: 429,
     message: "You're going a little fast — give it a moment and try again.",

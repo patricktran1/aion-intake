@@ -1,4 +1,4 @@
-import { handle, jsonOk } from "@/lib/http";
+import { handle, jsonOk, readJson } from "@/lib/http";
 import { patientView } from "@/lib/api";
 import { requireVerifiedPatient } from "@/lib/patient/access";
 import { store } from "@/lib/store";
@@ -26,18 +26,19 @@ export async function POST(req: Request, { params }: Params) {
       throw new AppError("RATE_LIMITED", "photo upload rate exceeded");
     }
 
-    // Reject an obviously oversized request before buffering its body.
-    const declared = Number(req.headers.get("content-length") ?? 0);
-    if (declared > MAX_UPLOAD_BYTES * 1.5) {
-      throw new AppError("PHOTO_TOO_LARGE", `content-length ${declared}`);
-    }
-
     const access = await requireVerifiedPatient(token);
 
+    // Bounded as the body arrives, not from content-length alone: a chunked
+    // request declares no length, so the header check this replaced was
+    // bypassable by anyone who bothered to send one. The ceiling allows the
+    // base64 envelope around a MAX_UPLOAD_BYTES image.
     let body: unknown;
     try {
-      body = await req.json();
-    } catch {
+      body = await readJson(req, Math.round(MAX_UPLOAD_BYTES * 1.5));
+    } catch (err) {
+      if (err instanceof AppError && err.code === "PAYLOAD_TOO_LARGE") {
+        throw new AppError("PHOTO_TOO_LARGE", err.detail);
+      }
       throw new AppError("PHOTO_INVALID", "unparseable photo body");
     }
     const b = (body ?? {}) as Record<string, unknown>;

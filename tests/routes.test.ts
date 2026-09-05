@@ -80,10 +80,25 @@ describe("patient intake API", () => {
     expect(getIntakeByToken(TOKEN)!.status).toBe("in_progress");
   });
 
-  it("treats a missing answer field as a skip rather than an error", async () => {
+  it("treats an EMPTY answer as a skip — the patient is never trapped", async () => {
     await startRoute(post(), params(TOKEN));
-    const res = await messageRoute(post({ inputMode: "text" }), params(TOKEN));
+    const res = await messageRoute(post({ answer: "", inputMode: "text" }), params(TOKEN));
     expect(res.status).toBe(200);
+  });
+
+  it("rejects a body with no answer field at all", async () => {
+    // This route used to coerce a missing `answer` to "" and treat it as a
+    // skip. That reads as leniency and is not: the "Skip this one" button sends
+    // `answer: ""` explicitly, so an absent key carries no patient intent — it
+    // means a client sent the wrong shape. Accepting it returned 200, recorded
+    // a blank answer and advanced the interview past the question, producing an
+    // intake that looked completed and said nothing, with no way for the
+    // clinician to tell that from a patient who genuinely skipped everything.
+    await startRoute(post(), params(TOKEN));
+    const before = getIntakeByToken(TOKEN)!.messages.length;
+    const res = await messageRoute(post({ inputMode: "text" }), params(TOKEN));
+    expect(res.status).toBe(400);
+    expect(getIntakeByToken(TOKEN)!.messages.length).toBe(before);
   });
 
   it("lets the patient correct the summary before submitting", async () => {

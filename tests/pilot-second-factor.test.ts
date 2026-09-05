@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
-import { createPilotFixture, intakeIdFor, TEST_PEPPER, type PilotFixture } from "./helpers/pilot";
+import { createPilotFixture, TEST_PEPPER, type PilotFixture } from "./helpers/pilot";
 import {
   SECOND_FACTOR_KINDS,
   hashSecondFactor,

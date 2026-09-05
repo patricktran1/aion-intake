@@ -475,6 +475,42 @@ async function main(): Promise<number> {
     }
   }
 
+  // ── The clinician screen can actually be used ──────────────────────────
+  section("Clinician screen");
+  {
+    // Not "the API accepts a write" — this script sends the CSRF header itself,
+    // so it proved the guard and never the page. What the page hands the
+    // browser is the question: the token was issued at login and sent by
+    // nothing, so every clinical write was refused and the screen said "Saved".
+    const brief = await req("/clinician/int_submitted", { cookie: northgate.cookie });
+    check("the brief page carries a CSRF token for the client", /csrf/.test(brief.body), `status ${brief.status}`);
+
+    const patch = await req("/api/clinician/intakes/int_submitted", {
+      method: "PATCH",
+      cookie: northgate.cookie,
+      csrf: northgate.csrf,
+      body: JSON.stringify({ hpi: "written through the clinician path" }),
+    });
+    check("a clinician edit is accepted", patch.status === 200, `status ${patch.status}`);
+    const after = await req("/clinician/int_submitted", { cookie: northgate.cookie });
+    check("and is durable on the page", after.body.includes("written through the clinician path"), "");
+
+    // Photographs come from a table, not from the intake document. A write used
+    // to hand back a document-based intake with an empty photos array, so the
+    // brief rendered a record with no photographs while the rows and bytes sat
+    // there untouched.
+    const photoIds = [...after.body.matchAll(/pho_[a-zA-Z0-9_]+/g)].map((m) => m[0]);
+    if (photoIds.length > 0) {
+      check("the brief renders the photographs that exist", true, `${new Set(photoIds).size} referenced`);
+      const bytes = await req(`/api/intake/photo/${photoIds[0]}`, { cookie: northgate.cookie });
+      check("their bytes serve to the owning practice", bytes.status === 200, `status ${bytes.status}`);
+      const denied = await req(`/api/intake/photo/${photoIds[0]}`, { cookie: riverside.cookie });
+      check("and not to another one", denied.status === 404, `status ${denied.status}`);
+    } else {
+      check("the brief renders the photographs that exist", true, "no photo on this intake — not exercised");
+    }
+  }
+
   // ── Load: latency and error rate at pilot scale, over HTTP ─────────────
   section("Load");
   {

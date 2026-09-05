@@ -383,7 +383,17 @@ export class SqlStore implements Store {
       );
       if (!rows[0]) throw new AppError("NOT_FOUND", `intake ${id}`);
 
-      const current = toIntake(rows[0]);
+      // Photos come from the photos TABLE, not from the document. The document
+      // carries an empty array in pilot mode, so handing the caller a bare
+      // `toIntake(row)` silently dropped every photograph — and any caller that
+      // rendered the result showed a record with no photos at all. That is what
+      // happened to the clinician brief and to the patient's own review screen:
+      // the first answer after an upload made the photographs disappear from
+      // the page while the rows and bytes sat there untouched.
+      //
+      // Loading them here rather than asking every caller to remember is the
+      // only version of this that stays true.
+      const current = { ...toIntake(rows[0]), photos: await this.loadPhotos(tx, id) };
       const { intake, result } = await mutate(current);
       if (!intake) return result;
 
@@ -398,7 +408,10 @@ export class SqlStore implements Store {
           intake.status,
           intake.pathway,
           intake.urgentFlag,
-          toDocument(intake),
+          // Never write photos into the document: the table is authoritative,
+          // and a second copy is a second thing to keep in step. It would also
+          // survive a photo's deletion.
+          toDocument({ ...intake, photos: [] }),
           intake.startedAt ?? null,
           intake.submittedAt ?? null,
           rows[0].version,

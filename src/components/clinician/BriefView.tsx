@@ -33,6 +33,12 @@ export interface BriefData {
   aiCostUsd: number;
   /** False in pilot mode: a cost figure has no place on a clinical screen. */
   showCost: boolean;
+  /**
+   * The session's CSRF token, echoed on every write. Null in demo, where there
+   * is no session. Without it every pilot clinical write is refused — see the
+   * comment on `patch`.
+   */
+  csrf: string | null;
 }
 
 /**
@@ -78,29 +84,67 @@ export function BriefView({ data }: { data: BriefData }) {
   const noteRef = useAutoSize(note);
   const [saving, setSaving] = useState<null | "hpi" | "review" | "note">(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Every clinician write goes through here, and two things about it were
+   * wrong in a way that only showed up in pilot mode.
+   *
+   * The CSRF token was issued at login and sent by nothing. The double-submit
+   * check on the server is correct and was doing its job: it refused every one
+   * of these writes with a 403. And because the response was never looked at,
+   * the screen said "Saved" regardless — a physician editing an HPI would see
+   * it confirm, and nothing would have been written. Silence would have been
+   * better; a false confirmation on a clinical screen is the worst of the three
+   * possible outcomes.
+   */
+  async function send(url: string, init: RequestInit): Promise<Response | null> {
+    const headers = new Headers(init.headers);
+    if (data.csrf) headers.set("x-aion-csrf", data.csrf);
+    try {
+      const res = await fetch(url, { ...init, headers });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "That change was not saved. Please try again.");
+        return null;
+      }
+      setError(null);
+      return res;
+    } catch {
+      setError("Couldn't reach the server. That change was not saved.");
+      return null;
+    }
+  }
 
   async function patch(body: Record<string, unknown>, kind: "hpi" | "review") {
     setSaving(kind);
-    await fetch(`/api/clinician/intakes/${data.id}`, {
+    const res = await send(`/api/clinician/intakes/${data.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
     setSaving(null);
+    if (!res) return;
     setSaved(kind);
     setTimeout(() => setSaved(null), 2000);
   }
 
   async function generateNote() {
     setSaving("note");
-    await fetch(`/api/clinician/intakes/${data.id}`, {
+    const saveFirst = await send(`/api/clinician/intakes/${data.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ hpi, review }),
     });
-    const res = await fetch(`/api/clinician/intakes/${data.id}/note`, { method: "POST" });
-    const body = await res.json();
-    setNote(body.note ?? "");
+    if (!saveFirst) {
+      setSaving(null);
+      return;
+    }
+    const res = await send(`/api/clinician/intakes/${data.id}/note`, { method: "POST" });
+    if (res) {
+      const body = await res.json();
+      setNote(body.note ?? "");
+    }
     setSaving(null);
   }
 
@@ -112,6 +156,14 @@ export function BriefView({ data }: { data: BriefData }) {
 
   return (
     <div className="min-h-dvh-safe">
+      {error && (
+        /* A failed clinical write has to be visible. It used to be invisible:
+           the response was never read, so the screen confirmed a save that the
+           server had refused. */
+        <div role="alert" className="border-b border-flag bg-flag-soft px-6 py-3 text-[14px] text-flag no-print">
+          {error}
+        </div>
+      )}
       <header className="sticky top-0 z-10 border-b hairline bg-surface no-print">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3.5">
           <div className="flex items-center gap-4">

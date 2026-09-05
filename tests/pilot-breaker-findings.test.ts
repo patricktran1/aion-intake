@@ -513,3 +513,80 @@ describe("a pilot can actually be started", () => {
     expect(doc).toMatch(/pilot:clinician/);
   });
 });
+
+describe("photographs survive the write path", () => {
+  /**
+   * Photos live in the photos TABLE; the intake document carries an empty
+   * array. `withIntake` returned the document-based intake, so every caller
+   * that rendered its result showed a record with no photographs — the
+   * clinician brief and the patient's own review screen both did. The rows and
+   * the bytes were untouched the whole time; only the screen was wrong, which
+   * is the version of this bug that no storage test can see.
+   */
+  async function withPhoto(intakeId: string): Promise<string> {
+    const { photoKey } = await import("@/lib/objects");
+    const key = photoKey("prac_northgate", intakeId, "image/jpeg");
+    await f.objects.put(key, Buffer.from([0xff, 0xd8, 0xff]), "image/jpeg");
+    await f.store.addPhoto({
+      id: `pho_${intakeId}`, intakeId, practiceId: "prac_northgate", objectKey: key,
+      mime: "image/jpeg", bytes: 3, width: 800, height: 600, kind: "close",
+      caption: "", advisories: [], idempotencyKey: null,
+    });
+    return key;
+  }
+
+  it("withIntake hands the caller the photos that exist", async () => {
+    const intakeId = intakeIdFor(f.seed, "active");
+    await withPhoto(intakeId);
+    const seen = await f.store.withIntake(intakeId, async (intake) => ({
+      intake: null,
+      result: intake.photos.length,
+    }));
+    expect(seen, "the mutator saw an intake with no photographs").toBe(1);
+  });
+
+  it("a write does not make them disappear", async () => {
+    const intakeId = intakeIdFor(f.seed, "active");
+    await withPhoto(intakeId);
+    await f.store.withIntake(intakeId, async (intake) => ({
+      intake: { ...intake, note: "an edit" },
+      result: null,
+    }));
+    const bundle = await f.store.bundleById(intakeId);
+    expect(bundle!.intake.photos).toHaveLength(1);
+  });
+
+  it("the document never carries a second copy of them", async () => {
+    // A copy in the document is a copy to keep in step, and it would survive
+    // the photo's deletion.
+    const intakeId = intakeIdFor(f.seed, "active");
+    await withPhoto(intakeId);
+    await f.store.withIntake(intakeId, async (intake) => ({
+      intake: { ...intake, note: "an edit" },
+      result: null,
+    }));
+    const { rows } = await f.driver.query<{ n: number }>(
+      "SELECT jsonb_array_length(document->'photos') AS n FROM intakes WHERE id = $1",
+      [intakeId],
+    );
+    expect(Number(rows[0].n)).toBe(0);
+  });
+});
+
+describe("the clinician screen can actually write", () => {
+  it("the brief is handed the session's CSRF token", () => {
+    // It was issued at login and sent by nothing, so the double-submit check
+    // refused every clinician write — correctly, and invisibly.
+    const page = readFileSync(join(process.cwd(), "src/app/clinician/[id]/page.tsx"), "utf8");
+    expect(page).toMatch(/csrf: ctx\?\.session\.csrf/);
+  });
+
+  it("every write sends it, and none of them ignores the response", () => {
+    const view = readFileSync(join(process.cwd(), "src/components/clinician/BriefView.tsx"), "utf8");
+    expect(view).toMatch(/headers\.set\("x-aion-csrf", data\.csrf\)/);
+    // A false "Saved" on a clinical screen is worse than silence.
+    expect(view).toMatch(/if \(!res\.ok\)/);
+    const writes = [...view.matchAll(/await fetch\(`\/api\/clinician/g)];
+    expect(writes, "a clinician write that bypasses send() skips the CSRF header").toHaveLength(0);
+  });
+});

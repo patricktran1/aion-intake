@@ -123,6 +123,10 @@ export default async function BriefPage({ params }: { params: Promise<{ id: stri
     // Demo only. See BriefView for why a cost figure has no place on a
     // clinician's screen during a real encounter.
     showCost: !pilot,
+    // Read from the signed session and handed to the client, because the
+    // cookie is HttpOnly and the browser cannot read it. Without this the
+    // double-submit check refuses every clinician write.
+    csrf: ctx?.session.csrf ?? null,
   };
 
   return <BriefView data={data} />;

@@ -6,6 +6,7 @@
  *   npm run pilot:check           technical readiness report
  *   npm run pilot:retention       delete records past their retention window
  *   npm run pilot:reconcile       drain the deletion outbox (photo bytes still owed)
+ *   npm run pilot:code -- --intake=int_x   issue a second-factor code for one intake
  *
  * Every command works against whatever DATABASE_URL names: a real Postgres
  * server, or in-process Postgres via the "pglite:<dir>" scheme, which is what
@@ -34,6 +35,15 @@ async function openDriver(): Promise<Driver> {
   if (url.startsWith("pglite:")) {
     const dir = url.slice("pglite:".length) || ".pglite";
     process.stderr.write(`using in-process Postgres at ${dir}\n`);
+    // In-process means in THIS process. A running dev server holds its own
+    // handle on the same directory with its own cache, so a change made here
+    // is not visible there until it restarts — and two writers on one PGlite
+    // directory is not a supported arrangement. Worth saying out loud: the
+    // symptom is a command that reports success and appears to have done
+    // nothing, which is a confusing hour.
+    process.stderr.write(
+      yellow("stop any running dev:pilot server first — pglite is single-writer\n"),
+    );
     return pgliteDriver(dir);
   }
   if (!url) throw new Error("DATABASE_URL is not set");
@@ -400,6 +410,74 @@ async function cmdReconcile(): Promise<number> {
   }
 }
 
+/**
+ * Issues a second-factor secret for one intake — strategy B (a code the
+ * practice reads out at booking) or C (a one-time code delivered to the
+ * contact on file).
+ *
+ * This exists so those two strategies are reachable rather than decorative.
+ * Without a way to issue a secret they would be code nobody could exercise, and
+ * a security mechanism nobody can exercise is one nobody has tested. Delivery
+ * for C is the console adapter and nothing else: it prints the code to this
+ * terminal, which is exactly what a developer needs and exactly what a real
+ * pilot must not run on.
+ */
+async function cmdCode(): Promise<number> {
+  const cfg = readConfig();
+  if (cfg.mode !== "pilot") {
+    console.error(red("Second-factor codes only apply in pilot mode."));
+    return 1;
+  }
+  const intakeId = args.find((a) => a.startsWith("--intake="))?.slice("--intake=".length);
+  if (!intakeId) {
+    console.error(red("Usage: pilot code --intake=<id> [--kind=code|otp]"));
+    return 1;
+  }
+  const kind = (args.find((a) => a.startsWith("--kind="))?.slice("--kind=".length) ?? "code") as
+    | "code"
+    | "otp";
+  if (kind !== "code" && kind !== "otp") {
+    console.error(red("--kind must be 'code' or 'otp'."));
+    return 1;
+  }
+
+  const { randomBytes } = await import("node:crypto");
+  const { mintCode, hashSecondFactor, consoleOtpDelivery, OTP_TTL_MINUTES } = await import(
+    "@/lib/patient/second-factor"
+  );
+  const driver = await openDriver();
+  try {
+    const store = new SqlStore(driver, { pepper: cfg.pilot!.tokenPepper });
+    const bundle = await store.bundleById(intakeId);
+    if (!bundle) {
+      console.error(red(`No intake ${intakeId}.`));
+      return 1;
+    }
+
+    const code = mintCode(randomBytes);
+    const expiresAt =
+      kind === "otp" ? new Date(Date.now() + OTP_TTL_MINUTES * 60_000).toISOString() : null;
+    // Only the hash is stored. The plaintext exists in this terminal and in
+    // whatever channel the practice uses, and nowhere else.
+    await store.setSecondFactor(intakeId, kind, hashSecondFactor(code, cfg.pilot!.tokenPepper), expiresAt);
+
+    if (kind === "otp") await consoleOtpDelivery.send({ intakeId }, code);
+    console.log(`\n${green(`Second factor for ${intakeId} is now '${kind}'.`)}`);
+    console.log(`  code: ${code}`);
+    if (expiresAt) console.log(`  expires: ${expiresAt} (${OTP_TTL_MINUTES} minutes)`);
+    console.log(
+      yellow(
+        "\n  Any verification already passed for this link has been cleared, and the\n" +
+          "  attempt counter reset. Deliver this through a DIFFERENT channel than the\n" +
+          "  link itself — if both arrive on the same handset it is not a second factor.\n",
+      ),
+    );
+    return 0;
+  } finally {
+    await driver.close();
+  }
+}
+
 async function cmdBackup(): Promise<number> {
   const { dumpDatabase } = await import("@/lib/db/backup");
   const { writeFileSync } = await import("node:fs");
@@ -459,6 +537,7 @@ const COMMANDS: Record<string, () => Promise<number>> = {
   check: cmdCheck,
   retention: cmdRetention,
   reconcile: cmdReconcile,
+  code: cmdCode,
   backup: cmdBackup,
   restore: cmdRestore,
 };

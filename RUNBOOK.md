@@ -146,9 +146,16 @@ it again**:
    cleans up whatever the first left.
 3. For a specific intake: deleting it again is a no-op if it is already gone,
    and completes the deletion if it was partial.
-4. To find orphaned objects (an object whose row is gone): list the bucket
-   prefix for the practice and compare against `SELECT object_key FROM photos`.
-   Anything in the bucket not in the table is an orphan and can be deleted.
+4. `npm run pilot:reconcile` drains the deletion outbox: every object whose
+   row is already gone and whose bytes are still owed a deletion. This is the
+   normal repair, and it is safe to run at any time, as often as you like.
+   A key it reports as having failed five or more times is a configuration
+   problem — bucket credentials, a deleted bucket — and not something a further
+   retry fixes; until it succeeds, that photograph still exists.
+5. Orphans predating the outbox (or created by anything that bypassed it): list
+   the bucket prefix for the practice and compare against
+   `SELECT object_key FROM photos`. Anything in the bucket not in the table and
+   not in `pending_object_deletions` is an orphan and can be deleted.
 
 The one thing that survives deletion by design is the audit event recording
 that the deletion happened. That is correct — it carries no clinical content.

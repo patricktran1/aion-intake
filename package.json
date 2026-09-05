@@ -32,7 +32,8 @@
     "db:restore": "tsx scripts/pilot.ts restore",
     "retention:dry": "tsx scripts/pilot.ts retention",
     "security:smoke": "tsx scripts/smoke.ts",
-    "attack": "tsx scripts/attack.ts"
+    "attack": "tsx scripts/attack.ts",
+    "pilot:code": "tsx scripts/pilot.ts code"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

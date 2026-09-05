@@ -199,23 +199,43 @@ their record.
 ```bash
 npm run pilot:retention              # dry run: what is due
 npm run pilot:retention -- --apply   # delete it
+npm run pilot:reconcile              # drain anything the bytes still owe
 ```
 
-Deletion removes the intake, its messages, its facts, its photo rows, the
-patient token and the objects behind the photographs, in one transaction, and
-writes an audit event recording that it happened. Audit events survive their
-subject by design: the record is gone, the fact that it existed and was
-deleted is not.
+Deletion removes, in one transaction: the intake, its messages, its facts, its
+photo rows, the patient token, **the visit** and **the patient** — the last two
+because this product holds one visit per intake and no longitudinal record, so
+a visit with no intake has nothing left to be, and a patient with no visits has
+no reason to exist here. A patient with another appointment still inside the
+window is kept: they are a live record, not a leftover.
+
+The photograph BYTES are a second system with no transaction across the two, so
+the intent to delete them is written in the same transaction as the rows
+(`pending_object_deletions`) and a sweeper retries until each object is
+confirmed gone. That means a crash or a storage outage during deletion delays
+the bytes rather than stranding them: `pilot:reconcile` finishes the job, and
+reports any key that has failed repeatedly, which is a credentials problem
+rather than something another retry fixes.
+
+Audit events survive their subject by design: the record is gone, the fact that
+it existed and was deleted is not.
 
 Verify by hand, once:
 
 ```sql
-SELECT count(*) FROM photos WHERE intake_id = '<deleted id>';        -- 0
+SELECT count(*) FROM photos WHERE intake_id = '<deleted id>';         -- 0
 SELECT count(*) FROM patient_tokens WHERE intake_id = '<deleted id>'; -- 0
+SELECT count(*) FROM visits WHERE id = '<the visit id>';              -- 0
+SELECT count(*) FROM patients WHERE id = '<the patient id>';          -- 0
+SELECT count(*) FROM pending_object_deletions;                        -- 0
 SELECT count(*) FROM audit_events WHERE resource_id = '<deleted id>'; -- > 0
 ```
 
 And confirm the objects are gone from the bucket, not just the rows.
+
+**Intakes nobody submitted** are collected too, on the shorter (photo) window.
+A patient who opened their link, typed a symptom and closed the tab used to
+leave a record with no retention clock on it at all.
 
 ---
 

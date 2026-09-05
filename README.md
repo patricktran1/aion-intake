@@ -40,7 +40,7 @@ cp .env.example .env.local   # then set ANTHROPIC_API_KEY if you want model mode
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Unset: deterministic mode. Set: model-backed extraction and drafting. |
 | `AION_MODEL` | Model id. Defaults to `claude-haiku-4-5`. |
-| `CLINICIAN_ACCESS_CODE` | Unset: clinician view is open. Set: shared passphrase required. |
+| `CLINICIAN_ACCESS_CODE` | **Demo only.** Unset: clinician view is open. Set: shared passphrase required. Not read in pilot mode, where clinicians have real accounts. |
 
 ## Walk the demo
 

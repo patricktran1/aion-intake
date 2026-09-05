@@ -39,13 +39,20 @@ export function hashToken(rawToken: string, pepper: string): string {
   return createHash("sha256").update(`${pepper}:${rawToken}`).digest("hex");
 }
 
-/** Constant-time compare of two hex digests of equal length. */
-export function tokenHashEquals(a: string, b: string): boolean {
-  const ab = Buffer.from(a, "utf8");
-  const bb = Buffer.from(b, "utf8");
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
-}
+/*
+ * REMOVED: tokenHashEquals, a constant-time comparison of two token hashes.
+ *
+ * Nothing ever called it. It sat here making the design read as careful about
+ * timing while the actual lookup is `WHERE token_hash = $1` in Postgres, which
+ * is not constant time and does not need to be: the token is 256 bits from the
+ * CSPRNG, so there is no candidate an attacker could steer a timing signal
+ * toward. An unused security function is worse than none — a reviewer counts it
+ * as a control, and it is protecting nothing.
+ *
+ * The comparisons that DO need to be constant time are in auth/password.ts,
+ * auth/session.ts and patient/second-factor.ts, where the secret is short
+ * enough for the guess to matter.
+ */
 
 /**
  * The second factor.
@@ -87,6 +94,3 @@ export function dobMatches(supplied: string, storedIso: string): boolean {
 /** After this many wrong answers the token is locked and must be reissued. */
 export const MAX_VERIFICATION_ATTEMPTS = 5;
 
-export function expiryFrom(now: Date, ttlHours: number): string {
-  return new Date(now.getTime() + ttlHours * 3600_000).toISOString();
-}

@@ -23,10 +23,14 @@ lifecycle state (live, active, submitted, expired, revoked, reviewed) across
 two practices.
 
 ```bash
-npm test                     # 900+ tests
+npm test                     # 1,000+ tests
 npx vitest run tests/pilot-  # the pilot suites specifically
 npm run pilot:check          # technical readiness
 npm run smoke                # repository-level security checks
+npm run attack               # 61 adversarial checks over HTTP, against a
+                             # running pilot (npm run dev:pilot in another
+                             # terminal). Refuses to run anywhere but a local
+                             # synthetic pilot; it submits, deletes and revokes.
 ```
 
 ---
@@ -74,11 +78,17 @@ It runs as one of two things, chosen by `AION_RUNTIME_MODE`:
   `x-aion-csrf`, which a cross-site form cannot set. Origin is checked
   additionally where the browser sends it.
 
+- **Logout ends the session on the server**, not only in the browser. Each
+  account carries a `session_epoch` stamped into the cookie at issue and
+  compared on every request; logout increments it, so a captured cookie stops
+  working when the clinician signs out rather than up to twelve hours later.
+
 **Where we think this is weakest:** local password accounts are not an
-identity provider. There is no MFA, no password rotation, no lockout on the
-account itself (only rate limiting), and no session revocation short of
-disabling the account. The intended endpoint is OIDC; `requireClinician()` in
-`src/lib/auth/guard.ts` is the seam.
+identity provider. There is no MFA and no password rotation, and there is no
+lockout on the account itself (only rate limiting per address). The intended
+endpoint is OIDC; `requireClinician()` in `src/lib/auth/guard.ts` is the seam.
+A stolen cookie is still valid until the clinician signs out, the account is
+disabled, or twelve hours pass — whichever comes first.
 
 ---
 
@@ -167,6 +177,18 @@ not an oversight.
   photograph of someone's skin. Bytes are fetched server-side after an
   authorization check and streamed, with `Cache-Control: private, no-store`.
 - Every read is audited.
+- **Deletion converges.** A row and an object cannot be written or removed
+  atomically, so the row goes first and the intent to delete the bytes commits
+  in the same transaction (`pending_object_deletions`); a sweeper retries until
+  the object is confirmed absent. The alternative ordering strands a photograph
+  nothing references and nothing can find — a retention failure that reports
+  itself as success. On upload the ordering is the mirror image: bytes after
+  commit, and a failed write removes the row, so the worst case is "no row, no
+  object" rather than half a photograph.
+- **Uploads carrying any metadata are refused**, not stripped — EXIF, XMP, a
+  PNG text chunk, a WebP EXIF chunk. The client re-encodes through a canvas,
+  which emits none of it, so anything present means the bytes did not come from
+  the client we ship.
 - Uploads are validated by inspecting the actual bytes (PNG IHDR, JPEG SOF
   markers, WebP VP8/VP8L/VP8X) — client-declared mime and dimensions are
   discarded. No decoder runs, so there is no image-parsing attack surface. A
@@ -194,6 +216,22 @@ the intake row. Two requests for the same intake serialise in the database, so
 a second web instance changes nothing. There is also an optimistic `version`
 column, so any future path that skips the lock fails loudly rather than
 overwriting silently.
+
+**This was not true until recently, and the way it failed is worth your
+attention.** The driver sent `BEGIN`, the caller's statements and `COMMIT`
+through one `query` function. Against a connection pool — the only thing a real
+pilot runs — each of those goes to whichever connection is free, so the row
+lock took nothing that outlived its statement and the connection that received
+the `BEGIN` went back to the pool still inside an open transaction, where
+unrelated queries joined it. Every test passed throughout, because every test
+drives PGlite: one connection, so the statements happened to land in the right
+place. A transaction now holds a checked-out connection for its lifetime, and
+`tests/pilot-pooled-driver.test.ts` fakes the *pool* rather than the database,
+because which connection a statement went to is the whole question and a
+single-connection database cannot answer it.
+
+If you are looking for more of this class: anything whose correctness depends
+on the deployment topology rather than on the SQL.
 
 Tested against real Postgres — PGlite is Postgres compiled to WebAssembly, so
 transactions, row locks and constraint conflicts are the genuine
@@ -242,8 +280,9 @@ If you have limited time, spend it here:
    you think a pilot faces? If not, is B or C actually reachable for a small
    practice, or is the honest answer that the link should be shorter-lived?
 3. **The patient token in the URL path.** History, referrers, proxy logs.
-4. **Session revocation.** A stolen cookie is valid for up to 12 hours unless
-   the account is disabled.
+4. **Session revocation.** A stolen cookie dies at logout, at account
+   disablement, or after 12 hours. There is nothing to revoke one otherwise —
+   no session list, no "sign out everywhere but here".
 5. **The JSONB intake document.** It is parsed back through a Zod schema, but
    it is the one place where a large attacker-influenced structure is stored
    and re-read.

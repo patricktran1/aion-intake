@@ -87,11 +87,17 @@ real patient uses it.
 - **Patient:** the intake link is a bearer credential — 128 bits from the
   platform CSPRNG (`crypto.getRandomValues`). Knowing the link is the only
   authentication. There is no account, no password, and no session.
-- **Clinician:** optional shared passphrase via `CLINICIAN_ACCESS_CODE`,
-  enforced in `src/middleware.ts` over `/clinician`, `/api/clinician`, and
-  `/api/metrics`, with a constant-time comparison and an httpOnly cookie. Unset
-  by default, which leaves the demo open. **A shared passphrase is not
-  authentication and is not presented as such.**
+- **Clinician (demo only):** optional shared passphrase via
+  `CLINICIAN_ACCESS_CODE`, enforced in `src/middleware.ts` over `/clinician`,
+  `/api/clinician`, and `/api/metrics`, with a constant-time comparison and an
+  httpOnly cookie. Unset by default, which leaves the demo open. **A shared
+  passphrase is not authentication and is not presented as such.**
+
+  It is also **not a pilot control**, and reading it as one was a real gap: the
+  variable is not part of pilot configuration, so the gate never runs in pilot
+  mode, and `/api/metrics` was open there while the route matrix said
+  "clinician". Every pilot route now calls a real guard, and the matrix test
+  no longer exempts anything by name.
 - The clinician API cannot overwrite patient-supplied facts. Only the HPI and the
   review fields are writable from that side, so provenance in the brief stays
   true. Enforced by test.

@@ -25,6 +25,7 @@
     "db:seed": "tsx scripts/pilot.ts seed",
     "pilot:check": "tsx scripts/pilot.ts check",
     "pilot:retention": "tsx scripts/pilot.ts retention",
+    "pilot:reconcile": "tsx scripts/pilot.ts reconcile",
     "dev:pilot": "bash scripts/dev-pilot.sh",
     "smoke": "tsx scripts/smoke.ts",
     "db:backup": "tsx scripts/pilot.ts backup",

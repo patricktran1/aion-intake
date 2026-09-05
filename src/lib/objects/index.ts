@@ -31,6 +31,19 @@ export interface ObjectStore {
   readonly kind: "local" | "s3";
   put(key: string, body: Buffer, contentType: string): Promise<StoredObject>;
   get(key: string): Promise<{ body: Buffer; contentType: string } | null>;
+  /**
+   * Removes an object. **True means the object is confirmed absent** — whether
+   * this call removed it or it was already gone. False means the store could
+   * not confirm that, and the caller should retry.
+   *
+   * The idempotent reading is not a convenience: the deletion sweeper retries
+   * until it gets a true, so an adapter that reported "already gone" as failure
+   * would leave an entry that never drains, and one that reported a genuine
+   * error as success would drop the intent and strand the bytes forever. The
+   * two adapters used to disagree on exactly this case (local returned false
+   * for a missing file, S3 mapped 404 to true), which is why it is written down
+   * here and asserted in tests/pilot-objects.test.ts for both.
+   */
   delete(key: string): Promise<boolean>;
   exists(key: string): Promise<boolean>;
   /** Keys under a prefix. Used by the retention job and by tests. */

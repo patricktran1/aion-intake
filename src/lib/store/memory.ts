@@ -250,6 +250,18 @@ export class MemoryStore implements Store {
     });
   }
 
+  /**
+   * The demo has no object store, so nothing is ever owed a byte deletion and
+   * the outbox is permanently empty. These are honest no-ops rather than
+   * `throw new Error("not supported")`: the sweeper is allowed to run in either
+   * mode, and it should find nothing to do rather than crash.
+   */
+  async pendingObjectDeletions(): Promise<Array<{ objectKey: string; attempts: number }>> {
+    return [];
+  }
+  async resolveObjectDeletion(): Promise<void> {}
+  async failObjectDeletion(): Promise<void> {}
+
   async intakesPastRetention(): Promise<Array<{ id: string; practiceId: string }>> {
     return [];
   }

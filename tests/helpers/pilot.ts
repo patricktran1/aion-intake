@@ -51,6 +51,9 @@ export async function createPilotFixture(): Promise<PilotFixture> {
       // otherwise inherit the spent tokens of the one before it and fail for a
       // reason unrelated to what it is testing.
       await driver.query("DELETE FROM rate_limits");
+      // Likewise the deletion outbox: an entry left by one test would make the
+      // next one's sweeper act on a key it knows nothing about.
+      await driver.query("DELETE FROM pending_object_deletions");
     },
     async dispose() {
       await driver.close();

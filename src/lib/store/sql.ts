@@ -360,25 +360,70 @@ export class SqlStore implements Store {
   // --- Deletion ------------------------------------------------------------
 
   async deleteIntake(id: string): Promise<{ deleted: boolean; photoKeys: string[] }> {
-    return this.driver.transaction(async (tx) => {
+    const outcome = await this.driver.transaction(async (tx) => {
       const { rows } = await tx.query<{ id: string }>(
         "SELECT id FROM intakes WHERE id = $1 FOR UPDATE",
         [id],
       );
       if (!rows[0]) return { deleted: false, photoKeys: [] };
 
-      // Collected before the delete so the caller can remove the objects; a
-      // key we forget here is a photo that outlives its record.
-      const { rows: keys } = await tx.query<{ object_key: string }>(
-        "SELECT object_key FROM photos WHERE intake_id = $1",
+      const { rows: keys } = await tx.query<{ object_key: string; practice_id: string }>(
+        "SELECT object_key, practice_id FROM photos WHERE intake_id = $1",
         [id],
       );
+
+      // The intent to delete the bytes is recorded in the SAME transaction that
+      // removes the rows. Without this, a crash between the row delete and the
+      // object delete strands a photograph that nothing references and nothing
+      // can ever find — a retention failure that reports itself as success.
+      for (const k of keys) {
+        await tx.query(
+          `INSERT INTO pending_object_deletions (object_key, practice_id, reason)
+           VALUES ($1, $2, 'intake_deleted') ON CONFLICT (object_key) DO NOTHING`,
+          [k.object_key, k.practice_id],
+        );
+      }
+
       // ON DELETE CASCADE removes photos and the patient token. Audit events
       // are not children of the intake and deliberately survive: they are the
       // record that the deletion happened.
       await tx.query("DELETE FROM intakes WHERE id = $1", [id]);
       return { deleted: true, photoKeys: keys.map((k) => k.object_key) };
     });
+
+    // Attempt the bytes immediately, outside the transaction. This is the fast
+    // path, not the guarantee — whatever fails here stays in the outbox for the
+    // sweeper. Callers get `photoKeys` for their audit entry; they no longer
+    // have to delete anything, and a caller that still does is harmless because
+    // object deletion is idempotent.
+    for (const key of outcome.photoKeys) await this.sweepOne(key);
+    return outcome;
+  }
+
+  /**
+   * Retention's photo deletion: the row and the intent in one transaction, then
+   * a best-effort sweep. Retention used to delete the object first and the row
+   * second, which meant one failing object aborted the whole run and left the
+   * rest of the batch undeleted. Now a failure is one stuck entry, not a stuck
+   * job, and re-running converges.
+   */
+  async retirePhoto(photoId: string): Promise<{ objectKey: string } | null> {
+    const objectKey = await this.driver.transaction(async (tx) => {
+      const { rows } = await tx.query<{ object_key: string; practice_id: string }>(
+        "DELETE FROM photos WHERE id = $1 RETURNING object_key, practice_id",
+        [photoId],
+      );
+      if (!rows[0]) return null;
+      await tx.query(
+        `INSERT INTO pending_object_deletions (object_key, practice_id, reason)
+         VALUES ($1, $2, 'retention') ON CONFLICT (object_key) DO NOTHING`,
+        [rows[0].object_key, rows[0].practice_id],
+      );
+      return rows[0].object_key;
+    });
+    if (!objectKey) return null;
+    await this.sweepOne(objectKey);
+    return { objectKey };
   }
 
   async intakesPastRetention(now: Date): Promise<Array<{ id: string; practiceId: string }>> {
@@ -474,9 +519,9 @@ export class SqlStore implements Store {
 
   async removePhoto(intakeId: string, photoId: string): Promise<IntakeBundle> {
     if (!this.objects) throw new AppError("INTERNAL", "object store not configured");
-    const objects = this.objects;
+    let pendingKey: string | null = null;
 
-    return this.driver.transaction(async (tx) => {
+    const bundle = await this.driver.transaction(async (tx) => {
       const { rows } = await tx.query<IntakeRow>(
         "SELECT * FROM intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
         [intakeId],
@@ -490,15 +535,94 @@ export class SqlStore implements Store {
           "DELETE FROM photos WHERE id = $1 AND intake_id = $2 RETURNING object_key",
           [photoId, intakeId],
         );
-        // The object goes after the row, and a missing object is not an error:
-        // deletion converges to "gone" whichever operation the failure hit.
-        if (del[0]) await objects.delete(del[0].object_key).catch(() => false);
+        if (del[0]) {
+          // Enqueue inside the transaction, then attempt the delete outside the
+          // happy path's critical section. If the attempt fails — or we die
+          // before it — the outbox entry survives and the sweeper converges.
+          await tx.query(
+            `INSERT INTO pending_object_deletions (object_key, practice_id, reason)
+             VALUES ($1, $2, 'photo_removed') ON CONFLICT (object_key) DO NOTHING`,
+            [del[0].object_key, rows[0].practice_id],
+          );
+          pendingKey = del[0].object_key;
+        }
       }
 
       const b = await this.assemble(tx, rows[0]);
       if (!b) throw new AppError("INTERNAL", "intake has no bundle");
       return b;
     });
+
+    // Outside the transaction: the row is already gone and the intent is
+    // durable, so a failure here is a retry, not a lost deletion.
+    if (pendingKey) await this.sweepOne(pendingKey);
+    return bundle;
+  }
+
+  /**
+   * Deletes one owed object and clears its outbox entry.
+   *
+   * The entry is cleared **only** on a confirmed absence. `ObjectStore.delete`
+   * returns true when the object is gone — including when it was already gone,
+   * which is what makes a retry safe — and false when the store could not
+   * confirm that. Resolving on anything less would drop the intent and strand
+   * the bytes permanently, which is the exact failure this outbox exists to
+   * prevent; an earlier version of this method ignored the return value and
+   * did precisely that.
+   */
+  async sweepOne(objectKey: string): Promise<boolean> {
+    if (!this.objects) return false;
+    let gone = false;
+    try {
+      gone = await this.objects.delete(objectKey);
+    } catch {
+      gone = false;
+    }
+    if (gone) {
+      await this.resolveObjectDeletion(objectKey);
+      return true;
+    }
+    await this.failObjectDeletion(objectKey);
+    return false;
+  }
+
+  /**
+   * Drains owed deletions. Safe to run concurrently with itself and with live
+   * traffic: every step is idempotent, so the worst a double run costs is a
+   * second DELETE against an object that is already gone.
+   *
+   * @returns how many objects are now confirmed gone, and how many are still owed.
+   */
+  async sweepPendingDeletions(limit = 200): Promise<{ swept: number; failed: number }> {
+    let swept = 0;
+    let failed = 0;
+    for (const entry of await this.pendingObjectDeletions(limit)) {
+      if (await this.sweepOne(entry.objectKey)) swept += 1;
+      else failed += 1;
+    }
+    return { swept, failed };
+  }
+
+  async pendingObjectDeletions(limit: number): Promise<Array<{ objectKey: string; attempts: number }>> {
+    const { rows } = await this.driver.query<{ object_key: string; attempts: number }>(
+      // Fewest attempts first: a key that keeps failing — a bucket permission
+      // problem, a key the provider will not accept — must not sit at the head
+      // of the queue starving every deletion enqueued after it.
+      "SELECT object_key, attempts FROM pending_object_deletions ORDER BY attempts, enqueued_at LIMIT $1",
+      [Math.max(1, Math.min(limit, 1000))],
+    );
+    return rows.map((r) => ({ objectKey: r.object_key, attempts: Number(r.attempts) }));
+  }
+
+  async resolveObjectDeletion(objectKey: string): Promise<void> {
+    await this.driver.query("DELETE FROM pending_object_deletions WHERE object_key = $1", [objectKey]);
+  }
+
+  async failObjectDeletion(objectKey: string): Promise<void> {
+    await this.driver.query(
+      "UPDATE pending_object_deletions SET attempts = attempts + 1, last_error_at = now() WHERE object_key = $1",
+      [objectKey],
+    );
   }
 
   async addPhoto(p: {

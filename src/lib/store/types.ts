@@ -188,6 +188,18 @@ export interface Store {
    */
   deleteIntake(id: string): Promise<{ deleted: boolean; photoKeys: string[] }>;
 
+  // --- Deletion outbox ---------------------------------------------------
+  /**
+   * Object keys whose rows are already gone and whose bytes are still owed a
+   * deletion. Populated in the same transaction that removes the rows, so the
+   * intent survives a crash; drained by the sweeper until the object is gone.
+   */
+  pendingObjectDeletions(limit: number): Promise<Array<{ objectKey: string; attempts: number }>>;
+  /** Removes an entry once its object is confirmed gone. */
+  resolveObjectDeletion(objectKey: string): Promise<void>;
+  /** Records a failed attempt so a poison key is visible rather than silent. */
+  failObjectDeletion(objectKey: string): Promise<void>;
+
   /** Records past their retention window, for the deletion job to act on. */
   intakesPastRetention(now: Date): Promise<Array<{ id: string; practiceId: string }>>;
   photosPastRetention(now: Date): Promise<Array<{ intakeId: string; photoId: string; objectKey: string }>>;

@@ -5,6 +5,7 @@
  *   npm run db:seed -- --confirm  load the synthetic pilot seed
  *   npm run pilot:check           technical readiness report
  *   npm run pilot:retention       delete records past their retention window
+ *   npm run pilot:reconcile       drain the deletion outbox (photo bytes still owed)
  *
  * Every command works against whatever DATABASE_URL names: a real Postgres
  * server, or in-process Postgres via the "pglite:<dir>" scheme, which is what
@@ -16,6 +17,7 @@ import { pgliteDriver } from "@/lib/db/pglite";
 import { seedPilot, SEED_PASSWORD } from "@/lib/db/seed-pilot";
 import { SqlStore } from "@/lib/store/sql";
 import { LocalObjectStore } from "@/lib/objects/local";
+import { objectStore } from "@/lib/objects/select";
 import { readConfig, ConfigError } from "@/lib/config/runtime";
 import type { Driver } from "@/lib/db/driver";
 
@@ -256,9 +258,7 @@ async function cmdRetention(): Promise<number> {
   const dryRun = !has("--apply");
   const driver = await openDriver();
   try {
-    const store = new SqlStore(driver, { pepper: cfg.pilot!.tokenPepper });
-    const objects =
-      cfg.pilot!.objectStore.kind === "local" ? new LocalObjectStore(cfg.pilot!.objectStore.root) : null;
+    const store = new SqlStore(driver, { pepper: cfg.pilot!.tokenPepper, objects: await objectStore() });
 
     const photoCutoff = new Date(Date.now() - cfg.pilot!.photoRetentionDays * 86400_000);
     const intakeCutoff = new Date(Date.now() - cfg.pilot!.intakeRetentionDays * 86400_000);
@@ -271,15 +271,16 @@ async function cmdRetention(): Promise<number> {
     console.log(`  intakes submitted over ${cfg.pilot!.intakeRetentionDays}d ago : ${dueIntakes.length}`);
 
     if (!dryRun) {
+      // Both paths write the row delete and the intent to delete the bytes in
+      // one transaction, then attempt the bytes. Nothing here has to succeed
+      // for the deletion to hold: what fails stays in the outbox and the
+      // sweeper below (and `pilot:reconcile`) retries it. Re-running after an
+      // interruption is safe — every step is idempotent.
       for (const p of duePhotos) {
-        // Object first, then the row: an orphaned row is a recoverable
-        // inconsistency, an orphaned object is a photograph nothing points to.
-        if (objects) await objects.delete(p.objectKey);
-        await store.deletePhoto(p.photoId);
+        await store.retirePhoto(p.photoId);
       }
       for (const i of dueIntakes) {
         const res = await store.deleteIntake(i.id);
-        if (objects) for (const key of res.photoKeys) await objects.delete(key);
         await store.appendAudit({
           action: "intake.deleted",
           actorKind: "system",
@@ -292,6 +293,57 @@ async function cmdRetention(): Promise<number> {
         });
       }
       console.log(green(`  deleted ${duePhotos.length} photos and ${dueIntakes.length} intakes`));
+
+      const swept = await store.sweepPendingDeletions();
+      console.log(`  object bytes reclaimed: ${swept.swept}` + (swept.failed ? red(`, still owed: ${swept.failed}`) : ""));
+      if (swept.failed) {
+        console.log(yellow("  Re-run `npm run pilot:reconcile` — the rows are deleted and the bytes are still owed."));
+      }
+    }
+    console.log("");
+    return 0;
+  } finally {
+    await driver.close();
+  }
+}
+
+/**
+ * Drains the deletion outbox. Every entry is a photograph whose row is already
+ * gone and whose bytes are still owed a deletion. Safe to run at any time, as
+ * often as you like — it is the convergence half of "deleted means deleted".
+ */
+async function cmdReconcile(): Promise<number> {
+  const cfg = readConfig();
+  if (cfg.mode !== "pilot") {
+    console.error(red("Reconcile only applies in pilot mode."));
+    return 1;
+  }
+  const driver = await openDriver();
+  try {
+    const store = new SqlStore(driver, { pepper: cfg.pilot!.tokenPepper, objects: await objectStore() });
+    const owed = await store.pendingObjectDeletions(1000);
+    console.log(`\nDeletion outbox: ${owed.length} object(s) owed a deletion`);
+    if (owed.length === 0) {
+      console.log(green("  Nothing owed. Rows and bytes agree.\n"));
+      return 0;
+    }
+    const stuck = owed.filter((o) => o.attempts >= 5);
+    const { swept, failed } = await store.sweepPendingDeletions(1000);
+    console.log(green(`  reclaimed ${swept}`));
+    if (failed) {
+      console.log(red(`  still owed ${failed}`));
+      // A key that has failed repeatedly is a configuration problem — bucket
+      // permissions, a deleted bucket — not something a further retry fixes.
+      // Say so rather than letting it retry quietly forever.
+      if (stuck.length) {
+        console.log(
+          yellow(
+            `  ${stuck.length} key(s) have failed 5+ times. Check object-store credentials and\n` +
+              "  bucket permissions; until they succeed, those photographs still exist.",
+          ),
+        );
+      }
+      return 1;
     }
     console.log("");
     return 0;
@@ -345,6 +397,7 @@ const COMMANDS: Record<string, () => Promise<number>> = {
   seed: cmdSeed,
   check: cmdCheck,
   retention: cmdRetention,
+  reconcile: cmdReconcile,
   backup: cmdBackup,
   restore: cmdRestore,
 };

@@ -65,10 +65,16 @@ export class LocalObjectStore implements ObjectStore {
     }
   }
 
+  /**
+   * True means the object is confirmed absent. `force` makes an already-missing
+   * key succeed — the sweeper retries until it gets a true, so "already gone"
+   * must not read as failure. A real filesystem error (permissions, a busy
+   * handle) still throws out of `rm` and is reported as false.
+   */
   async delete(key: string): Promise<boolean> {
     const path = this.pathFor(key);
     try {
-      await rm(path);
+      await rm(path, { force: true });
       await rm(`${path}${CONTENT_TYPE_SUFFIX}`, { force: true });
       return true;
     } catch {

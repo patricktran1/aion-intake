@@ -78,6 +78,15 @@ export async function POST(req: Request, { params }: Params) {
     const raw = typeof asRecord.answer === "string" ? asRecord.answer : asRecord.dateOfBirth;
     const supplied = typeof raw === "string" ? raw.slice(0, 64) : "";
 
+    // Spend an attempt BEFORE checking the answer. resolveToken read the count
+    // and this route checked the answer and then incremented, so several
+    // requests arriving together each read a count under the limit and each got
+    // a guess — the real budget was the rate limiter's burst, not the five this
+    // advertises. Claiming first is one atomic statement, and a correct answer
+    // resets the counter, so a patient who mistypes twice loses nothing.
+    const claim = await s.claimVerificationAttempt(resolved.access.intakeId);
+    if (!claim.allowed) throw new AppError("INTAKE_REVOKED", "token locked");
+
     const bundle = await s.bundleById(resolved.access.intakeId);
     if (!bundle) throw new AppError("NOT_FOUND", "intake vanished between resolve and read");
 
@@ -97,7 +106,7 @@ export async function POST(req: Request, { params }: Params) {
     });
 
     if (!passed) {
-      const failures = await s.recordVerificationFailure(resolved.access.intakeId);
+      const failures = claim.attempts;
       await audit({
         action: "intake.verification_failed",
         actor: { kind: "patient", intakeId: resolved.access.intakeId },

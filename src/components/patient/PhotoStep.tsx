@@ -38,6 +38,16 @@ export function PhotoStep({
     try {
       for (const file of Array.from(files).slice(0, MAX_PHOTOS - photos.length)) {
         const prepared = await prepareImage(file);
+        // One key per selected file, minted before the request goes out. The
+        // server has always accepted this and had a unique index behind it, and
+        // the client never sent one — so "a retried upload cannot create a
+        // second photo" was true of the API and unreachable from the app. A
+        // patient on hospital wifi whose upload times out and retries is
+        // exactly who that guarantee is for.
+        const idempotencyKey =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const res = await fetch(`/api/intake/${token}/photos`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -48,6 +58,7 @@ export function PhotoStep({
             mime: prepared.mime,
             sharpness: prepared.sharpness,
             kind: photos.length === 0 ? "wide" : "close",
+            idempotencyKey,
           }),
         });
         const data = await res.json();

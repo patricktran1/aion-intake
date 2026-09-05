@@ -163,6 +163,20 @@ export interface Store {
   bundleForToken(rawToken: string): Promise<IntakeBundle | null>;
   markVerified(intakeId: string): Promise<void>;
   recordVerificationFailure(intakeId: string): Promise<number>;
+  /**
+   * Spends one attempt from the durable budget, atomically, BEFORE the answer
+   * is checked.
+   *
+   * The check and the increment used to be two statements with the whole
+   * verification between them, so N requests arriving together each read a
+   * count under the limit and each got to try a guess: the budget was the
+   * rate limiter's burst size rather than the five it advertises. Claiming
+   * first makes an attempt cost a token whether it succeeds or not, and a
+   * success resets the counter.
+   *
+   * @returns allowed false when the budget is already spent.
+   */
+  claimVerificationAttempt(intakeId: string): Promise<{ allowed: boolean; attempts: number }>;
   revokeToken(intakeId: string): Promise<void>;
   /**
    * Sets the secret for a code- or OTP-based second factor. Passing a null hash

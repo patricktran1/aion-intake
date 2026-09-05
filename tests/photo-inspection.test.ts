@@ -5,7 +5,7 @@ import { DEMO_TOKENS } from "@/lib/demo/seed";
 import { getIntakeByToken, resetDb } from "@/lib/store";
 import { resetAnalytics } from "@/lib/analytics";
 import { resetRateLimits } from "@/lib/ratelimit";
-import { fakeImageDataUrl, jpegDataUrl, pngDataUrl } from "./fixtures/images";
+import { fakeImageDataUrl, jpegDataUrl, pngDataUrl, webpDataUrl } from "./fixtures/images";
 
 /**
  * Server-side image inspection: the gates run on what the BYTES say, never on
@@ -31,11 +31,56 @@ beforeEach(() => {
 describe("header inspection", () => {
   it("reads real JPEG dimensions from SOF0", () => {
     const i = inspectDataUrl(jpegDataUrl(1234, 987));
-    expect(i).toMatchObject({ mime: "image/jpeg", width: 1234, height: 987, hasExif: false });
+    expect(i).toMatchObject({ mime: "image/jpeg", width: 1234, height: 987, hasMetadata: false });
   });
 
   it("detects an EXIF APP1 segment", () => {
-    expect(inspectDataUrl(jpegDataUrl(1400, 1050, { exif: true }))?.hasExif).toBe(true);
+    expect(inspectDataUrl(jpegDataUrl(1400, 1050, { exif: true }))?.hasMetadata).toBe(true);
+  });
+
+  /**
+   * The privacy claim is "a photograph carrying location data is refused". It
+   * held for exactly one shape of one format: an APP1 "Exif" segment before the
+   * JPEG frame header. Each of these went straight through.
+   */
+  it("detects an EXIF segment placed AFTER the frame header", () => {
+    // The scan used to return at the first SOF marker, so anything after it was
+    // never looked at — a one-line reordering for anyone writing an encoder.
+    expect(inspectDataUrl(jpegDataUrl(1400, 1050, { exifAfterSof: true }))?.hasMetadata).toBe(true);
+  });
+
+  it("detects an APP1 carrying XMP rather than EXIF", () => {
+    // XMP holds coordinates too, and its payload does not begin with "Exif".
+    expect(inspectDataUrl(jpegDataUrl(1400, 1050, { xmp: true }))?.hasMetadata).toBe(true);
+  });
+
+  it("detects a JPEG comment segment", () => {
+    expect(inspectDataUrl(jpegDataUrl(1400, 1050, { comment: true }))?.hasMetadata).toBe(true);
+  });
+
+  it("detects a PNG eXIf chunk", () => {
+    // PNG returned hasExif: false unconditionally, so a PNG with its GPS block
+    // intact passed a check whose whole purpose is that.
+    expect(inspectDataUrl(pngDataUrl(800, 600, { exif: true }))?.hasMetadata).toBe(true);
+  });
+
+  it("detects a PNG text chunk", () => {
+    expect(inspectDataUrl(pngDataUrl(800, 600, { text: true }))?.hasMetadata).toBe(true);
+  });
+
+  it("detects a WebP that declares EXIF in its VP8X flags", () => {
+    expect(inspectDataUrl(webpDataUrl(1200, 900, { exif: true }))?.hasMetadata).toBe(true);
+  });
+
+  it("detects a WebP that declares XMP", () => {
+    expect(inspectDataUrl(webpDataUrl(1200, 900, { xmp: true }))?.hasMetadata).toBe(true);
+  });
+
+  it("accepts clean images of every format — the check is not simply always true", () => {
+    // Without this the six checks above would pass with `hasMetadata = true`.
+    expect(inspectDataUrl(jpegDataUrl(1400, 1050))?.hasMetadata).toBe(false);
+    expect(inspectDataUrl(pngDataUrl(800, 600))?.hasMetadata).toBe(false);
+    expect(inspectDataUrl(webpDataUrl(1200, 900))?.hasMetadata).toBe(false);
   });
 
   it("reads real PNG dimensions from IHDR", () => {

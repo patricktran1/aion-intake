@@ -300,3 +300,90 @@ describe("the audit trail records only what happened", () => {
     expect(del).toMatch(/if \(removed\)[\s\S]{0,200}photo\.deleted/);
   });
 });
+
+describe("the verification budget is five, not five per instant", () => {
+  it("twenty simultaneous guesses spend exactly five attempts", async () => {
+    // resolveToken read the counter and the route incremented it after checking
+    // the answer, so requests arriving together each read a count under the
+    // limit and each got a guess. The real budget was whatever the rate
+    // limiter's burst allowed, not the five the design advertises.
+    const t = f.seed.tokens.find((x) => x.state === "active")!;
+    const claims = await Promise.all(
+      Array.from({ length: 20 }, () => f.store.claimVerificationAttempt(t.intakeId)),
+    );
+    expect(claims.filter((c) => c.allowed)).toHaveLength(5);
+    expect(new Set(claims.filter((c) => c.allowed).map((c) => c.attempts)).size).toBe(5);
+
+    const r = await f.store.resolveToken(t.rawToken);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.reason).toBe("locked");
+  });
+
+  it("a correct answer gives the budget back, so a mistyped date costs nothing", async () => {
+    const t = f.seed.tokens.find((x) => x.state === "active")!;
+    await f.store.claimVerificationAttempt(t.intakeId);
+    await f.store.claimVerificationAttempt(t.intakeId);
+    await f.store.markVerified(t.intakeId);
+    const { rows } = await f.driver.query<{ failed_verifications: number }>(
+      "SELECT failed_verifications FROM patient_tokens WHERE intake_id = $1",
+      [t.intakeId],
+    );
+    expect(Number(rows[0].failed_verifications)).toBe(0);
+  });
+
+  it("the route claims before it checks", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/api/intake/[token]/verify/route.ts"), "utf8");
+    expect(src.indexOf("claimVerificationAttempt")).toBeLessThan(src.indexOf("factor.verify("));
+  });
+});
+
+describe("tenant guards that were pinned by no test", () => {
+  /**
+   * Two guards did leak when removed and nothing turned red. A guard nothing
+   * pins is a guard that survives until someone refactors past it.
+   */
+  it("the note route refuses another practice's intake", async () => {
+    // Scoped existence check before any write.
+    const src = readFileSync(
+      join(process.cwd(), "src/app/api/clinician/intakes/[id]/note/route.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/bundleForClinician\(id, scope\.practiceId\)/);
+    // And the store query it depends on really is scoped.
+    expect(await f.store.bundleForClinician("int_other", "prac_northgate")).toBeNull();
+    expect(await f.store.bundleForClinician("int_other", "prac_riverside")).not.toBeNull();
+  });
+
+  it("removePhoto cannot reach a photo belonging to another intake", async () => {
+    // The photo id alone is not authority: it is only ever matched together
+    // with the intake the patient's token resolves to.
+    const mine = intakeIdFor(f.seed, "active");
+    const theirs = intakeIdFor(f.seed, "live");
+    const key = "prac_northgate/int_live/ffffffffffffffffffffffffffffffff.jpg";
+    await f.objects.put(key, Buffer.from([0xff, 0xd8, 0xff]), "image/jpeg");
+    await f.store.addPhoto({
+      id: "pho_theirs", intakeId: theirs, practiceId: "prac_northgate", objectKey: key,
+      mime: "image/jpeg", bytes: 3, width: 800, height: 600, kind: "close",
+      caption: "", advisories: [], idempotencyKey: null,
+    });
+
+    const res = await f.store.removePhoto(mine, "pho_theirs");
+    expect(res.removed).toBe(false);
+    const { rows } = await f.driver.query("SELECT id FROM photos WHERE id = 'pho_theirs'");
+    expect(rows, "another intake's photo must survive").toHaveLength(1);
+    expect(await f.objects.exists(key)).toBe(true);
+  });
+});
+
+describe("guarantees the shipped client can actually reach", () => {
+  it("the photo upload sends an idempotency key", () => {
+    // The server accepted one and had a unique index behind it; the client
+    // never sent one, so "a retried upload cannot create a second photo" was
+    // true of the API and unreachable from the app. A patient on hospital wifi
+    // whose upload times out and retries is exactly who it is for.
+    const src = readFileSync(join(process.cwd(), "src/components/patient/PhotoStep.tsx"), "utf8");
+    expect(src).toMatch(/idempotencyKey/);
+    const body = src.slice(src.indexOf("body: JSON.stringify"), src.indexOf("const data = await res.json()"));
+    expect(body).toMatch(/idempotencyKey/);
+  });
+});

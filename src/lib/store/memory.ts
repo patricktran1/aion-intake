@@ -186,6 +186,10 @@ export class MemoryStore implements Store {
   async recordVerificationFailure(): Promise<number> {
     return 0;
   }
+  /** The demo has no second factor, so there is no budget to spend. */
+  async claimVerificationAttempt(): Promise<{ allowed: boolean; attempts: number }> {
+    return { allowed: true, attempts: 0 };
+  }
   async revokeToken(): Promise<void> {}
   async setSecondFactor(): Promise<void> {}
 

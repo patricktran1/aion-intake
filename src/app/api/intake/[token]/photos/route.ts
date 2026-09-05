@@ -61,9 +61,13 @@ export async function POST(req: Request, { params }: Params) {
       track("intake_photo_rejected", { intake_id: access.intakeId, mime, bytes, reason: "not_an_image" });
       throw new AppError("PHOTO_INVALID", "byte inspection found no image");
     }
-    if (inspected.hasExif) {
-      track("intake_photo_rejected", { intake_id: access.intakeId, mime, bytes, reason: "exif_present" });
-      throw new AppError("PHOTO_INVALID", "exif present");
+    // Rejected, not stripped. The client re-encodes through a canvas, which
+    // emits no ancillary metadata at all, so anything here means the bytes did
+    // not come from the client we ship — and stripping would quietly accept an
+    // upload path we have no reason to trust.
+    if (inspected.hasMetadata) {
+      track("intake_photo_rejected", { intake_id: access.intakeId, mime, bytes, reason: "metadata_present" });
+      throw new AppError("PHOTO_INVALID", "image metadata present");
     }
 
     const s = await store();

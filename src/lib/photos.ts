@@ -101,8 +101,24 @@ export interface InspectedImage {
   mime: "image/jpeg" | "image/png" | "image/webp";
   width: number;
   height: number;
-  /** JPEG only: an APP1/Exif segment is present (production clients strip it). */
-  hasExif: boolean;
+  /**
+   * Any ancillary metadata at all — EXIF, XMP, or a text chunk.
+   *
+   * This used to be `hasExif` and only looked for a JPEG APP1 "Exif" segment,
+   * which made the privacy claim ("a photograph carrying location data is
+   * refused") true for exactly one of the three accepted formats and one of the
+   * several ways to carry it. PNG and WebP returned false unconditionally, so a
+   * PNG eXIf chunk or a WebP EXIF chunk sailed through with its GPS intact; and
+   * the JPEG scan returned at the first SOF marker, so an APP1 placed after the
+   * frame header was never seen, as was any APP1 carrying XMP rather than EXIF.
+   *
+   * The check is now positive rather than a list of known-bad markers. The
+   * client re-encodes through a canvas, which emits a bare image and no
+   * ancillary data whatsoever, so ANY metadata means the bytes did not come
+   * from the client we ship. That is a much easier property to get right than
+   * enumerating every container a coordinate can hide in.
+   */
+  hasMetadata: boolean;
 }
 
 export function inspectImageBytes(bytes: Uint8Array): InspectedImage | null {
@@ -113,35 +129,66 @@ export function inspectImageBytes(bytes: Uint8Array): InspectedImage | null {
     const width = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
     const height = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
     if (width <= 0 || height <= 0) return null;
-    return { mime: "image/png", width, height, hasExif: false };
+    // PNG carries metadata in named chunks: eXIf holds a whole EXIF block
+    // (GPS included) and the text chunks hold anything at all. Walk the chunk
+    // list rather than assuming a canvas produced it.
+    const METADATA_CHUNKS = new Set(["eXIf", "tEXt", "iTXt", "zTXt"]);
+    let hasMetadata = false;
+    let p = 8;
+    while (p + 8 <= bytes.length) {
+      const len =
+        ((bytes[p] << 24) | (bytes[p + 1] << 16) | (bytes[p + 2] << 8) | bytes[p + 3]) >>> 0;
+      const type = String.fromCharCode(bytes[p + 4], bytes[p + 5], bytes[p + 6], bytes[p + 7]);
+      if (METADATA_CHUNKS.has(type)) {
+        hasMetadata = true;
+        break;
+      }
+      if (type === "IDAT" || type === "IEND") break; // metadata precedes pixels
+      if (len > bytes.length) break; // truncated header buffer; stop rather than guess
+      p += 12 + len; // length + type + data + crc
+    }
+    return { mime: "image/png", width, height, hasMetadata };
   }
 
   // JPEG: FF D8, then marker segments; SOFn carries dimensions, APP1 "Exif" is EXIF.
   if (bytes[0] === 0xff && bytes[1] === 0xd8) {
-    let hasExif = false;
+    let hasMetadata = false;
+    let width = 0;
+    let height = 0;
     let i = 2;
+    // Keep scanning past the frame header. Returning at SOF meant an APP1
+    // placed after it was never looked at, which is a one-line reordering for
+    // anyone writing their own encoder.
     while (i + 9 < bytes.length) {
-      if (bytes[i] !== 0xff) return null; // corrupt marker stream
+      if (bytes[i] !== 0xff) break; // end of the header region we buffered
       const marker = bytes[i + 1];
       if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) {
         i += 2;
         continue;
       }
+      if (marker === 0xda || marker === 0xd9) break; // start of scan / end of image
       const len = (bytes[i + 2] << 8) | bytes[i + 3];
       if (len < 2) return null;
-      if (marker === 0xe1 && bytes[i + 4] === 0x45 && bytes[i + 5] === 0x78 && bytes[i + 6] === 0x69 && bytes[i + 7] === 0x66) {
-        hasExif = true; // "Exif"
-      }
+      // Any APPn but APP0 (JFIF, which a canvas emits) and any COM comment is
+      // metadata: EXIF and XMP both arrive as APP1, and ICC as APP2.
+      if ((marker >= 0xe1 && marker <= 0xef) || marker === 0xfe) hasMetadata = true;
       // SOF0..SOF15 except DHT(C4)/JPGA(C8)/DAC(CC) carry the frame header.
-      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-        const height = (bytes[i + 5] << 8) | bytes[i + 6];
-        const width = (bytes[i + 7] << 8) | bytes[i + 8];
+      if (
+        !width &&
+        marker >= 0xc0 &&
+        marker <= 0xcf &&
+        marker !== 0xc4 &&
+        marker !== 0xc8 &&
+        marker !== 0xcc
+      ) {
+        height = (bytes[i + 5] << 8) | bytes[i + 6];
+        width = (bytes[i + 7] << 8) | bytes[i + 8];
         if (width <= 0 || height <= 0) return null;
-        return { mime: "image/jpeg", width, height, hasExif };
       }
       i += 2 + len;
     }
-    return null;
+    if (!width) return null;
+    return { mime: "image/jpeg", width, height, hasMetadata };
   }
 
   // WebP: RIFF....WEBP, then VP8 / VP8L / VP8X chunk.
@@ -151,20 +198,27 @@ export function inspectImageBytes(bytes: Uint8Array): InspectedImage | null {
     if (chunk === "VP8X" && bytes.length >= 30) {
       const width = 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16));
       const height = 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16));
-      return { mime: "image/webp", width, height, hasExif: false };
+      // The VP8X flags byte says outright whether the file carries EXIF (0x08)
+      // or XMP (0x04). This returned false regardless, so a WebP with its GPS
+      // block intact was accepted by a check whose entire purpose is that.
+      const flags = bytes[20];
+      const hasMetadata = (flags & 0x08) !== 0 || (flags & 0x04) !== 0;
+      return { mime: "image/webp", width, height, hasMetadata };
     }
     if (chunk === "VP8 " && bytes.length >= 30) {
       const width = (bytes[26] | (bytes[27] << 8)) & 0x3fff;
       const height = (bytes[28] | (bytes[29] << 8)) & 0x3fff;
       if (width <= 0 || height <= 0) return null;
-      return { mime: "image/webp", width, height, hasExif: false };
+      // A simple-format WebP has exactly one chunk and no container for
+      // metadata; EXIF requires the extended (VP8X) form.
+      return { mime: "image/webp", width, height, hasMetadata: false };
     }
     if (chunk === "VP8L" && bytes.length >= 25) {
       if (bytes[20] !== 0x2f) return null;
       const b = bytes;
       const width = 1 + (((b[22] & 0x3f) << 8) | b[21]);
       const height = 1 + (((b[24] & 0x0f) << 10) | (b[23] << 2) | ((b[22] & 0xc0) >> 6));
-      return { mime: "image/webp", width, height, hasExif: false };
+      return { mime: "image/webp", width, height, hasMetadata: false };
     }
     return null;
   }

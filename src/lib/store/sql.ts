@@ -286,6 +286,19 @@ export class SqlStore implements Store {
     );
   }
 
+  async claimVerificationAttempt(intakeId: string): Promise<{ allowed: boolean; attempts: number }> {
+    // One statement: the limit is in the WHERE clause, so concurrent claims
+    // serialise on the row and the (n+1)th finds nothing to update.
+    const { rows } = await this.driver.query<{ failed_verifications: number }>(
+      `UPDATE patient_tokens SET failed_verifications = failed_verifications + 1
+        WHERE intake_id = $1 AND failed_verifications < $2
+        RETURNING failed_verifications`,
+      [intakeId, MAX_VERIFICATION_ATTEMPTS],
+    );
+    if (!rows[0]) return { allowed: false, attempts: MAX_VERIFICATION_ATTEMPTS };
+    return { allowed: true, attempts: Number(rows[0].failed_verifications) };
+  }
+
   async recordVerificationFailure(intakeId: string): Promise<number> {
     // Incremented in the database rather than read-modify-written, so parallel
     // guesses each cost an attempt instead of racing to the same number.

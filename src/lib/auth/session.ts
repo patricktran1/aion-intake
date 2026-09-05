@@ -21,6 +21,16 @@ export interface Session {
   exp: number;
   /** Random per-session value, used as the CSRF token. */
   csrf: string;
+  /**
+   * The account's session epoch at issue time. Compared against the row on
+   * every request, so incrementing it on the account invalidates every cookie
+   * already out there — which is what makes logout mean something.
+   *
+   * Optional on read: a cookie issued before this column existed has no epoch
+   * and is treated as epoch 0, so a deploy does not sign every clinician out
+   * mid-clinic.
+   */
+  epoch?: number;
 }
 
 export const SESSION_COOKIE = "aion_session";
@@ -39,12 +49,14 @@ export function issueSession(
   practiceId: string,
   secret: string,
   now: Date = new Date(),
+  epoch = 0,
 ): { value: string; session: Session } {
   const session: Session = {
     clinicianId,
     practiceId,
     exp: Math.floor(now.getTime() / 1000) + SESSION_TTL_SECONDS,
     csrf: randomUUID(),
+    epoch,
   };
   const payload = b64(JSON.stringify(session));
   return { value: `${payload}.${sign(payload, secret)}`, session };

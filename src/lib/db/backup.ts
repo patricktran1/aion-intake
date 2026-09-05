@@ -26,7 +26,17 @@ const TABLES = [
   "photos",
   "audit_events",
   "idempotency_keys",
-  "rate_limits",
+  // pending_object_deletions is application state, not derived: each row is a
+  // photograph whose record is gone and whose bytes are still owed a deletion.
+  // Leaving it out of the backup meant a restore silently forgot what it owed
+  // and the bytes became unreclaimable — the exact orphan the outbox exists to
+  // prevent, reintroduced by the recovery path.
+  "pending_object_deletions",
+  // rate_limits is NOT here on purpose. It is derived counting state that
+  // rebuilds itself in minutes, and restoring it would restore whatever
+  // buckets happened to be spent at backup time. It also used to be the one
+  // table that carried identifying values; it no longer does, and it still has
+  // no business in a backup.
   "schema_migrations",
 ] as const;
 

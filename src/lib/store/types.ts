@@ -111,6 +111,11 @@ export interface ClinicianAccount {
   displayName: string;
   credential: string;
   disabledAt: string | null;
+  /**
+   * Bumped to invalidate every session cookie already issued for this account.
+   * The mechanism behind logout and behind revoking a stolen cookie.
+   */
+  sessionEpoch: number;
 }
 
 /** A photo whose bytes and metadata have already been validated by the route. */
@@ -196,7 +201,14 @@ export interface Store {
    * carrying the same `idempotencyKey`.
    */
   attachPhoto(intakeId: string, practiceId: string, input: PhotoInput): Promise<PhotoResult>;
-  removePhoto(intakeId: string, photoId: string): Promise<IntakeBundle>;
+  /**
+   * @returns `removed` false when nothing was deleted — an unknown photo id, a
+   *   photo belonging to another intake, or a frozen record. The caller must
+   *   not audit a deletion that did not happen: an audit trail carrying events
+   *   for things that never occurred is worse than one with gaps, because
+   *   nothing in it can then be relied on.
+   */
+  removePhoto(intakeId: string, photoId: string): Promise<{ bundle: IntakeBundle; removed: boolean }>;
 
   // --- Deletion ----------------------------------------------------------
   /**
@@ -232,6 +244,8 @@ export interface Store {
   // --- Clinician accounts ------------------------------------------------
   clinicianByEmail(email: string): Promise<(ClinicianAccount & { passwordHash: string }) | null>;
   clinicianById(id: string): Promise<ClinicianAccount | null>;
+  /** Invalidates every session cookie issued for this account. @returns the new epoch. */
+  bumpSessionEpoch(clinicianId: string): Promise<number>;
 
   // --- Reference data ----------------------------------------------------
   getPractice(id: string): Promise<Practice | null>;

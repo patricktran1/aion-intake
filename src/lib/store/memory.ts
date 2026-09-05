@@ -233,15 +233,20 @@ export class MemoryStore implements Store {
     });
   }
 
-  async removePhoto(intakeId: string, photoId: string): Promise<IntakeBundle> {
+  async removePhoto(intakeId: string, photoId: string): Promise<{ bundle: IntakeBundle; removed: boolean }> {
     return withIntakeLock(intakeId, async () => {
       const intake = getIntake(intakeId);
       if (!intake) throw new Error(`intake ${intakeId} not found`);
       const bundle = bundleFor(intake);
       if (!bundle) throw new Error(`intake ${intakeId} has no bundle`);
-      if (intake.status === "ready_for_review" || intake.status === "reviewed") return bundle;
-      const saved = saveIntake({ ...intake, photos: intake.photos.filter((p) => p.id !== photoId) });
-      return { ...bundle, intake: saved };
+      if (intake.status === "ready_for_review" || intake.status === "reviewed") {
+        return { bundle, removed: false };
+      }
+      const remaining = intake.photos.filter((p) => p.id !== photoId);
+      const removed = remaining.length !== intake.photos.length;
+      if (!removed) return { bundle, removed: false };
+      const saved = saveIntake({ ...intake, photos: remaining });
+      return { bundle: { ...bundle, intake: saved }, removed: true };
     });
   }
 
@@ -302,6 +307,10 @@ export class MemoryStore implements Store {
   }
   async clinicianById(): Promise<ClinicianAccount | null> {
     return null;
+  }
+  /** No accounts, so no sessions to invalidate. */
+  async bumpSessionEpoch(): Promise<number> {
+    return 0;
   }
 
   async getPractice(id: string): Promise<Practice | null> {

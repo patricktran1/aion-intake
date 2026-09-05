@@ -10,7 +10,13 @@
  * It exists because the alternatives were worse: an unauthenticated reset
  * endpoint that anyone could call mid-demonstration, and intake endpoints that
  * would happily accept a thousand writes a second.
+ *
+ * Every key that identifies anybody is hashed before it becomes one — see
+ * `opaque` below for what that is protecting against.
  */
+
+import { createHash } from "node:crypto";
+import { isPilot, pilotConfig } from "@/lib/config/runtime";
 
 interface Bucket {
   tokens: number;
@@ -108,12 +114,46 @@ export function allow(key: string, config: LimitConfig, now = Date.now()): boole
 export function clientKey(req: Request, scope: string): string {
   const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const real = req.headers.get("x-real-ip");
-  return `${scope}:${forwarded || real || "local"}`;
+  return `${scope}:${opaque(forwarded || real || "local")}`;
+}
+
+/**
+ * One-way, and not optional.
+ *
+ * In pilot mode a rate-limit key is a ROW IN POSTGRES, and it used to be
+ * `${scope}:token:${rawToken}` — the patient's live bearer credential, in
+ * cleartext, in a table that went into every logical backup. Six patient
+ * routes wrote one, so any intake a patient touched deposited working links
+ * next to the record they open. That made false the one claim the whole token
+ * design rests on: "only a peppered SHA-256 is stored, so a dump of the intake
+ * table does not yield working links."
+ *
+ * The bucket only ever needed a stable opaque identifier, never a readable
+ * one. Addresses and email addresses go through the same function for the same
+ * reason: neither belongs in a table whose whole purpose is counting.
+ */
+function opaque(value: string): string {
+  // The pepper when there is one, so a dump alone cannot even confirm a token
+  // the holder already has. Demo buckets live in a Map that never leaves the
+  // process, so a fixed salt there is honest rather than false comfort.
+  let pepper = "aion-demo-ratelimit";
+  try {
+    if (isPilot()) pepper = pilotConfig().tokenPepper;
+  } catch {
+    // Config unreadable — hash anyway. Failing open to the raw value is the
+    // one outcome this function exists to prevent.
+  }
+  return createHash("sha256").update(`${pepper}:rl:${value}`).digest("hex").slice(0, 32);
 }
 
 /** The natural unit for patient rate limiting: this patient's own intake. */
 export function intakeKey(token: string, scope: string): string {
-  return `${scope}:token:${token}`;
+  return `${scope}:token:${opaque(token)}`;
+}
+
+/** Keyed per address rather than per account: a clinic shares one address. */
+export function loginKey(email: string): string {
+  return `login:${opaque(email.trim().toLowerCase())}`;
 }
 
 export function resetRateLimits(): void {

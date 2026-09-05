@@ -481,17 +481,28 @@ export class SqlStore implements Store {
    * photos table, both under a lock on the intake row so the freeze and count
    * checks cannot race an upload.
    *
-   * The row is written before the object, and the object put is idempotent by
-   * key: a failure between the two leaves a row pointing at a missing object,
-   * which shows as a broken photo and is cleaned by retention — a recoverable
-   * inconsistency. The reverse (an object with no row) would be an invisible
-   * orphan that nothing ever reclaims.
+   * The bytes are written AFTER the transaction commits, and this is the whole
+   * point. The row and the object cannot be written atomically, so one of them
+   * has to go first, and the two failures are not equally bad:
+   *
+   *   row first  -> a crash leaves a row pointing at nothing. Visible as a
+   *                 broken photo, cleaned by retention. Recoverable.
+   *   object first -> a crash leaves a photograph nothing references and
+   *                 nothing will ever find. Not recoverable.
+   *
+   * This method's comment claimed the first ordering and implemented the
+   * second: `objects.put` ran INSIDE the transaction, before the final read
+   * and the commit. A rollback at any point after it — a failed re-read, a
+   * deadlock, a lost connection — undid the row and left the object. The put
+   * now happens after commit, and a failed put deletes the row it belongs to
+   * so the outcome is "no row, no object" rather than half a photograph.
    */
   async attachPhoto(intakeId: string, practiceId: string, input: PhotoInput): Promise<PhotoResult> {
     if (!this.objects) throw new AppError("INTERNAL", "object store not configured");
     const objects = this.objects;
+    let pending: { photoId: string; objectKey: string } | null = null;
 
-    return this.driver.transaction(async (tx) => {
+    const outcome: PhotoResult = await this.driver.transaction(async (tx): Promise<PhotoResult> => {
       const { rows } = await tx.query<IntakeRow>(
         "SELECT * FROM intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
         [intakeId],
@@ -533,21 +544,46 @@ export class SqlStore implements Store {
       // On an idempotent retry the insert did nothing; find the row that
       // already exists so the object is re-put under the right key.
       let objectKey = inserted[0]?.object_key;
+      let photoId = inserted[0]?.id;
+      let isRetry = false;
       if (!objectKey && input.idempotencyKey) {
-        const { rows: existing } = await tx.query<{ object_key: string }>(
-          "SELECT object_key FROM photos WHERE intake_id = $1 AND idempotency_key = $2",
+        const { rows: existing } = await tx.query<{ id: string; object_key: string }>(
+          "SELECT id, object_key FROM photos WHERE intake_id = $1 AND idempotency_key = $2",
           [intakeId, input.idempotencyKey],
         );
         objectKey = existing[0]?.object_key;
+        photoId = existing[0]?.id;
+        isRetry = Boolean(objectKey);
       }
-      if (!objectKey) throw new AppError("INTERNAL", "photo insert conflicted without an idempotency key");
+      if (!objectKey || !photoId) {
+        throw new AppError("INTERNAL", "photo insert conflicted without an idempotency key");
+      }
 
-      await objects.put(objectKey, dataUrlToBytes(input.dataUrl), input.mime);
-      return { ok: true, bundle: await refreshed() };
+      // A retry converges on the FIRST upload: its bytes are already stored and
+      // its metadata is what the row says. Re-putting would overwrite the bytes
+      // while the row kept the first attempt's dimensions and advisories, so the
+      // record would describe one image and the store would hold another.
+      pending = isRetry ? null : { photoId, objectKey };
+      return { ok: true as const, bundle: await refreshed() };
     });
+
+    if (pending) {
+      const { photoId, objectKey } = pending;
+      try {
+        await objects.put(objectKey, dataUrlToBytes(input.dataUrl), input.mime);
+      } catch (err) {
+        // The row committed and the bytes did not. Take the row back out —
+        // through the outbox path, so if the object partially landed it is
+        // still owed a deletion — and report the failure rather than handing
+        // back a bundle containing a photograph that does not exist.
+        await this.retirePhoto(photoId).catch(() => {});
+        throw err instanceof AppError ? err : new AppError("OBJECT_STORE_UNAVAILABLE", "photo bytes not stored");
+      }
+    }
+    return outcome;
   }
 
-  async removePhoto(intakeId: string, photoId: string): Promise<IntakeBundle> {
+  async removePhoto(intakeId: string, photoId: string): Promise<{ bundle: IntakeBundle; removed: boolean }> {
     if (!this.objects) throw new AppError("INTERNAL", "object store not configured");
     let pendingKey: string | null = null;
 
@@ -586,7 +622,7 @@ export class SqlStore implements Store {
     // Outside the transaction: the row is already gone and the intent is
     // durable, so a failure here is a retry, not a lost deletion.
     if (pendingKey) await this.sweepOne(pendingKey);
-    return bundle;
+    return { bundle, removed: pendingKey !== null };
   }
 
   /**
@@ -786,7 +822,7 @@ export class SqlStore implements Store {
 
   async clinicianByEmail(email: string): Promise<(ClinicianAccount & { passwordHash: string }) | null> {
     const { rows } = await this.driver.query<Record<string, unknown>>(
-      `SELECT id, practice_id, email, display_name, credential, password_hash, disabled_at
+      `SELECT id, practice_id, email, display_name, credential, password_hash, disabled_at, session_epoch
          FROM clinicians WHERE lower(email) = lower($1)`,
       [email],
     );
@@ -799,13 +835,14 @@ export class SqlStore implements Store {
       displayName: String(r.display_name),
       credential: String(r.credential ?? ""),
       disabledAt: iso(r.disabled_at),
+      sessionEpoch: Number(r.session_epoch ?? 0),
       passwordHash: String(r.password_hash),
     };
   }
 
   async clinicianById(id: string): Promise<ClinicianAccount | null> {
     const { rows } = await this.driver.query<Record<string, unknown>>(
-      `SELECT id, practice_id, email, display_name, credential, disabled_at
+      `SELECT id, practice_id, email, display_name, credential, disabled_at, session_epoch
          FROM clinicians WHERE id = $1`,
       [id],
     );
@@ -818,7 +855,16 @@ export class SqlStore implements Store {
       displayName: String(r.display_name),
       credential: String(r.credential ?? ""),
       disabledAt: iso(r.disabled_at),
+      sessionEpoch: Number(r.session_epoch ?? 0),
     };
+  }
+
+  async bumpSessionEpoch(clinicianId: string): Promise<number> {
+    const { rows } = await this.driver.query<{ session_epoch: number }>(
+      "UPDATE clinicians SET session_epoch = session_epoch + 1 WHERE id = $1 RETURNING session_epoch",
+      [clinicianId],
+    );
+    return Number(rows[0]?.session_epoch ?? 0);
   }
 
   // --- Reference data ------------------------------------------------------

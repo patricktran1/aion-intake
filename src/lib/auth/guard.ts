@@ -68,6 +68,14 @@ export async function requireClinician(): Promise<ClinicianContext> {
   if (account.practiceId !== session.practiceId) {
     throw new AppError("AUTH_REQUIRED", "session practice no longer matches account");
   }
+  // And the cookie must be from the current epoch. Logout increments it, so a
+  // cookie captured before a clinician signed out stops working at the moment
+  // they signed out rather than twelve hours later. A cookie issued before this
+  // column existed carries no epoch and reads as 0, so a deploy does not sign
+  // everyone out mid-clinic.
+  if ((session.epoch ?? 0) !== account.sessionEpoch) {
+    throw new AppError("AUTH_REQUIRED", "session invalidated");
+  }
 
   return {
     session,

@@ -69,16 +69,24 @@ export async function DELETE(req: Request, { params }: Params) {
   return handle(req, "DELETE /api/intake/[token]/photos/[photoId]", async ({ requestId }) => {
     const access = await requireVerifiedPatient(token);
     const s = await store();
-    const bundle = await s.removePhoto(access.intakeId, photoId);
-    await audit({
-      action: "photo.deleted",
-      actor: access.actor,
-      practiceId: access.practiceId,
-      resource: "photo",
-      resourceId: photoId,
-      requestId,
-      meta: { by: "patient" },
-    });
+    const { bundle, removed } = await s.removePhoto(access.intakeId, photoId);
+    // Only a deletion that happened is audited. This route used to write
+    // photo.deleted unconditionally, so an unknown photo id, another intake's
+    // photo id, or a frozen record all produced an audit event for a deletion
+    // that never occurred — and a patient could write as many of them as they
+    // liked. An audit trail carrying invented events is worse than one with
+    // gaps: nothing in it can be relied on afterwards.
+    if (removed) {
+      await audit({
+        action: "photo.deleted",
+        actor: access.actor,
+        practiceId: access.practiceId,
+        resource: "photo",
+        resourceId: photoId,
+        requestId,
+        meta: { by: "patient" },
+      });
+    }
     return jsonOk(patientView(bundle, { token }));
   });
 }

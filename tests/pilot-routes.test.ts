@@ -69,11 +69,12 @@ describe("each authorization class is actually implemented", () => {
   it("clinician routes obtain a scope or a clinician context", () => {
     for (const r of byClass("clinician")) {
       const src = srcFor(r.path);
-      const guarded =
-        /clinicianScope|clinicianWriteScope|requireClinician/.test(src) ||
-        // /api/metrics is gated in middleware alongside the clinician view;
-        // the matcher below is asserted separately.
-        r.path === "/api/metrics";
+      // No exemptions. This check used to carve out /api/metrics by name, on
+      // the grounds that middleware gated it — middleware that only runs when
+      // CLINICIAN_ACCESS_CODE is set, which pilot configuration never sets. The
+      // carve-out made the suite green and the matrix false, which is the one
+      // thing a matrix test must not do.
+      const guarded = /clinicianScope|clinicianWriteScope|requireClinician/.test(src);
       expect(guarded, `${r.path} claims "clinician" but calls no clinician guard`).toBe(true);
     }
   });

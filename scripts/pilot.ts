@@ -313,6 +313,15 @@ async function cmdRetention(): Promise<number> {
       }
       console.log(green(`  deleted ${duePhotos.length} photos and ${dueIntakes.length} intakes`));
 
+      // Rate-limit buckets are keyed by attacker-influenced values, so the
+      // table grows with traffic and nothing else was dropping rows. An evicted
+      // bucket simply refills to full, so this costs nothing but disk. The
+      // sweeper had a test and no caller — which is how a table grows without
+      // bound in a system that believes it does not.
+      const { sweepRateLimits } = await import("@/lib/ratelimit-shared");
+      const dropped = await sweepRateLimits(driver, new Date(Date.now() - 24 * 3600_000));
+      if (dropped > 0) console.log(`  rate-limit buckets swept: ${dropped}`);
+
       const swept = await store.sweepPendingDeletions();
       console.log(`  object bytes reclaimed: ${swept.swept}` + (swept.failed ? red(`, still owed: ${swept.failed}`) : ""));
       if (swept.failed) {

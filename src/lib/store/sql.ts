@@ -663,6 +663,40 @@ export class SqlStore implements Store {
         await this.retirePhoto(photoId).catch(() => {});
         throw err instanceof AppError ? err : new AppError("OBJECT_STORE_UNAVAILABLE", "photo bytes not stored");
       }
+
+      // The window between that COMMIT and this put belongs to nobody, and
+      // moving the put out of the transaction is what created it. A deletion
+      // landing inside it takes the intake lock, sees the committed row,
+      // enqueues the key, and sweeps an object that has not been written yet —
+      // which reports "confirmed absent", clears the outbox entry, and then
+      // these bytes land. Row gone, nothing owed, a photograph on disk that
+      // retention cannot find (it walks the photos table) and reconcile cannot
+      // find (it drains the outbox). Exactly the orphan the outbox exists to
+      // prevent, arriving through the fix for the other ordering.
+      //
+      // So after the bytes land, ask whether the row is still there. Present:
+      // any later deletion will see it and enqueue normally. Absent: the
+      // deleter already swept a key that did not exist, and this path owns the
+      // cleanup. Exhaustive rather than timing-dependent — there is no third
+      // answer — and the outbox row is written before the sweep, so a crash in
+      // between still converges.
+      const stillReferenced = await this.driver.transaction(async (tx) => {
+        const { rows } = await tx.query("SELECT 1 FROM photos WHERE id = $1", [photoId]);
+        if (rows[0]) return true;
+        await tx.query(
+          `INSERT INTO pending_object_deletions (object_key, practice_id, reason)
+           VALUES ($1, $2, 'orphaned_upload') ON CONFLICT (object_key) DO NOTHING`,
+          [objectKey, practiceId],
+        );
+        return false;
+      });
+      if (!stillReferenced) {
+        await this.sweepOne(objectKey);
+        // The bundle assembled inside the transaction describes an intake that
+        // no longer exists. Saying "uploaded" would be a second lie on top of
+        // the first.
+        throw new AppError("NOT_FOUND", `intake ${intakeId} was deleted during the upload`);
+      }
     }
     return outcome;
   }

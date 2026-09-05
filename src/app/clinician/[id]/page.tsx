@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { bundleById, saveIntake, store } from "@/lib/store";
 import { isPilot } from "@/lib/config/runtime";
@@ -45,6 +46,26 @@ export default async function BriefPage({ params }: { params: Promise<{ id: stri
   let { intake } = bundle;
   // The brief is only generated once, on first read, and never regenerated
   // behind a physician's edits.
+  //
+  // This is a GET that writes, which is a shape worth being uncomfortable
+  // about: a cross-site `<img src="/clinician/int_x">` in a signed-in
+  // clinician's browser would fire it, and a page navigation carries no CSRF
+  // token to check. Three things make it safe rather than merely unexploited,
+  // and they are the reasons it stays a GET rather than becoming a POST the
+  // page has no way to send:
+  //
+  //   - It is idempotent. The HPI is generated only when absent and the
+  //     timestamp only when null, so the tenth forged request writes nothing.
+  //   - It composes deterministically from the patient's own answers. There is
+  //     no attacker-supplied input and no model call, so a forged read cannot
+  //     put anything into the record.
+  //   - Tenancy still holds: bundleForClinician scopes by the session's
+  //     practice, so a forged request cannot reach another practice's intake.
+  //
+  // What an attacker gets is an audit row saying this clinician opened this
+  // brief — a false entry in a trail whose whole value is being true. So the
+  // audit records where the request came from, and a read this page did not
+  // originate is visible as such rather than indistinguishable from a real one.
   if (pilot) {
     intake = await s!.withIntake(id, async (current) => {
       const next = {
@@ -65,6 +86,10 @@ export default async function BriefPage({ params }: { params: Promise<{ id: stri
       practiceId: ctx!.practiceId,
       resource: "intake",
       resourceId: id,
+      // A same-origin navigation is the clinician opening the brief. Anything
+      // else is a request their browser was made to send, and the trail should
+      // say so rather than record it as a genuine read.
+      meta: { origin: (await headers()).get("sec-fetch-site") ?? "unknown" },
     });
   } else {
     if (!intake.hpi) {

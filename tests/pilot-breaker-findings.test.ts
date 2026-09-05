@@ -642,3 +642,93 @@ describe("analytics values are shaped, not just their keys", () => {
     expect(cleaned.count).toBe(3);
   });
 });
+
+describe("an upload racing a deletion leaves nothing behind", () => {
+  /**
+   * Moving `objects.put` after the commit stopped a rollback stranding an
+   * object — and opened a window that belongs to nobody. A deletion landing
+   * inside it takes the intake lock, sees the committed photos row, enqueues
+   * the key, and sweeps an object that has not been written yet. Sweeping a
+   * missing key reports "confirmed absent", which clears the outbox entry.
+   * Then the bytes land: row gone, nothing owed, a photograph that retention
+   * cannot find (it walks the photos table) and reconcile cannot find (it
+   * drains the outbox). The orphan the outbox exists to prevent, arriving
+   * through the fix for the other ordering.
+   */
+  class SlowPut implements ObjectStore {
+    readonly kind = "local" as const;
+    onPutStart: (() => void) | null = null;
+    /** The keys this store was asked to write, so assertions can scope to them. */
+    readonly written: string[] = [];
+    constructor(private readonly inner: ObjectStore) {}
+    async put(key: string, body: Buffer, contentType: string): Promise<StoredObject> {
+      this.written.push(key);
+      this.onPutStart?.();
+      await new Promise((r) => setTimeout(r, 30));
+      return this.inner.put(key, body, contentType);
+    }
+    get(key: string) { return this.inner.get(key); }
+    delete(key: string) { return this.inner.delete(key); }
+    exists(key: string) { return this.inner.exists(key); }
+    list(prefix: string) { return this.inner.list(prefix); }
+  }
+
+  it("the bytes do not survive the record", async () => {
+    const objects = new SlowPut(f.objects);
+    const store = new SqlStore(f.driver, { pepper: TEST_PEPPER, objects });
+    const intakeId = intakeIdFor(f.seed, "active");
+
+    let started: () => void = () => {};
+    const putStarted = new Promise<void>((r) => { started = r; });
+    objects.onPutStart = started;
+
+    const upload = store
+      .attachPhoto(intakeId, "prac_northgate", {
+        dataUrl: "data:image/jpeg;base64," + Buffer.from("secret").toString("base64"),
+        mime: "image/jpeg", bytes: 6, width: 800, height: 600,
+        kind: "close", caption: "", advisories: [], idempotencyKey: null,
+      })
+      .catch(() => null);
+
+    await putStarted;
+    await store.deleteIntake(intakeId);
+    await upload;
+
+    expect((await f.driver.query("SELECT id FROM photos")).rows).toHaveLength(0);
+    expect(await store.pendingObjectDeletions(10)).toHaveLength(0);
+    // Scoped to the key this test wrote: the object root outlives a reseed, so
+    // earlier tests in this file leave objects behind on purpose.
+    expect(objects.written.length).toBeGreaterThan(0);
+    for (const key of objects.written) {
+      expect(await f.objects.exists(key), "a photograph nothing references and no job can find").toBe(false);
+    }
+  }, 30_000);
+
+  it("an upload that is not raced still succeeds", async () => {
+    // Without this the check above would pass by rejecting every upload.
+    const store = new SqlStore(f.driver, { pepper: TEST_PEPPER, objects: f.objects });
+    const intakeId = intakeIdFor(f.seed, "active");
+    const res = await store.attachPhoto(intakeId, "prac_northgate", {
+      dataUrl: "data:image/jpeg;base64," + Buffer.from("kept").toString("base64"),
+      mime: "image/jpeg", bytes: 4, width: 800, height: 600,
+      kind: "close", caption: "", advisories: [], idempotencyKey: null,
+    });
+    expect(res.ok).toBe(true);
+    const { rows } = await f.driver.query<{ object_key: string }>("SELECT object_key FROM photos");
+    expect(rows).toHaveLength(1);
+    expect(await f.objects.exists(rows[0].object_key)).toBe(true);
+  });
+});
+
+describe("a GET that writes says where the request came from", () => {
+  it("the audited brief read records its provenance", () => {
+    // A cross-site <img src="/clinician/int_x"> in a signed-in clinician's
+    // browser fires this page, and a navigation carries no CSRF token. The
+    // write itself is idempotent, deterministic and tenant-scoped, so the only
+    // thing an attacker gains is a false line in the audit trail — which is
+    // enough, in a trail whose whole value is being true.
+    const src = readFileSync(join(process.cwd(), "src/app/clinician/[id]/page.tsx"), "utf8");
+    expect(src).toMatch(/sec-fetch-site/);
+    expect(src).toMatch(/brief\.opened/);
+  });
+});

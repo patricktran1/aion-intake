@@ -54,7 +54,7 @@ function relativeDay(iso: string): { label: string; soon: boolean } {
  * patient, never displayed on a clinician's screen.
  */
 export default async function ClinicianList() {
-  let rows: ReturnType<typeof listRow>[];
+  let rows: Array<ReturnType<typeof listRow> & { token?: string }>;
   let heading = "Lakeview Dermatology · Dr. A. Sandoval";
   let dataLabel = "Synthetic demo data";
   let pilot = false;
@@ -69,11 +69,11 @@ export default async function ClinicianList() {
     // Scoped in the query. The practice id comes from the signed session and
     // never from the URL.
     const bundles = await s.listBundles(ctx.practiceId);
-    rows = bundles.map((b) => listRow(b));
+    rows = bundles.map((b) => listRow(b));  // no token: pilot never shows a patient link
     heading = `${bundles[0]?.practice.name ?? "Your practice"} · ${ctx.displayName}${ctx.credential ? `, ${ctx.credential}` : ""}`;
     dataLabel = "";
   } else {
-    rows = listBundles().map(listRow);
+    rows = listBundles().map((b) => listRow(b, { includeToken: true }));
   }
 
   const ready = rows.filter((r) => r.status === "ready_for_review");

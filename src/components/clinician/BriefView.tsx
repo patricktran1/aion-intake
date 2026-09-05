@@ -31,6 +31,8 @@ export interface BriefData {
   questionCount: number;
   durationLabel: string;
   aiCostUsd: number;
+  /** False in pilot mode: a cost figure has no place on a clinical screen. */
+  showCost: boolean;
 }
 
 /**
@@ -384,11 +386,21 @@ export function BriefView({ data }: { data: BriefData }) {
           </section>
         </div>
 
-        <p className="mt-8 border-t hairline pt-4 text-[12px] leading-relaxed text-muted">
-          {data.aiCostUsd > 0
-            ? `Intake AI cost for this patient: $${data.aiCostUsd.toFixed(4)}`
-            : "This intake was produced by the deterministic interview engine — no AI cost."}
-        </p>
+        {/*
+          A founder metric, and it belongs on the founder's screen. Cost per
+          patient is the one number that reads as billing-adjacent on a clinical
+          page, and a dermatologist has no use for it mid-encounter. Shown in the
+          demo, where the point is to prove the interview is nearly free; hidden
+          in a pilot, where the point is the patient. /api/metrics has it either
+          way.
+        */}
+        {data.showCost && (
+          <p className="mt-8 border-t hairline pt-4 text-[12px] leading-relaxed text-muted">
+            {data.aiCostUsd > 0
+              ? `Intake AI cost for this patient: $${data.aiCostUsd.toFixed(4)}`
+              : "This intake was produced by the deterministic interview engine — no AI cost."}
+          </p>
+        )}
       </main>
     </div>
   );

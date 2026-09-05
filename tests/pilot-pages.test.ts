@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+
+function readdirRecursive(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? readdirRecursive(join(dir, e.name)) : [join(dir, e.name)],
+  );
+}
 
 /**
  * The PAGES, not the API routes.
@@ -115,11 +121,14 @@ describe("the demo control panel", () => {
 });
 
 describe("no pilot page path reads the in-memory store unguarded", () => {
-  const pages = [
-    "app/intake/[token]/page.tsx",
-    "app/clinician/page.tsx",
-    "app/clinician/[id]/page.tsx",
-  ];
+  // Every page.tsx under src/app, found on disk. A hand-written list is an
+  // exemption by omission: the first version of this check listed three pages
+  // and missed `app/page.tsx`, which read the demo store in pilot mode and
+  // rendered a front door full of dead links. A new page cannot escape this by
+  // nobody remembering to add it.
+  const pages = readdirRecursive(join(process.cwd(), "src/app"))
+    .filter((f) => f.endsWith("page.tsx"))
+    .map((f) => f.slice(join(process.cwd(), "src/").length));
 
   it.each(pages)("%s brackets any memory-helper use behind a mode check", (page) => {
     const src = pilotBranch(read(page));

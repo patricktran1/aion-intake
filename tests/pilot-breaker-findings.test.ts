@@ -451,3 +451,65 @@ describe("retention deletes the person, not only the paperwork", () => {
     expect(src).toMatch(/intakesPastRetention\(intakeCutoff, abandonedCutoff\)/);
   });
 });
+
+describe("configuration knobs that actually decide something", () => {
+  it("AION_PATIENT_SECOND_FACTOR reaches token issuance", async () => {
+    // It was read only to print a line in `pilot:check`, so an operator could
+    // set it, see it echoed back, and still be issuing date-of-birth tokens.
+    // A security knob that changes nothing is the worst kind: it is believed.
+    const codeStore = new SqlStore(f.driver, { pepper: TEST_PEPPER, defaultSecondFactor: "code" });
+    const t = f.seed.tokens.find((x) => x.state === "active")!;
+    await codeStore.issueToken(t.intakeId, "prac_northgate", "a-fresh-raw-token-for-this-test", new Date(Date.now() + 3600_000).toISOString());
+    const r = await codeStore.resolveToken("a-fresh-raw-token-for-this-test");
+    expect(r.ok && r.access.secondFactorKind).toBe("code");
+  });
+
+  it("the default is still date of birth when nothing is configured", async () => {
+    const plain = new SqlStore(f.driver, { pepper: TEST_PEPPER });
+    const t = f.seed.tokens.find((x) => x.state === "live")!;
+    await plain.issueToken(t.intakeId, "prac_northgate", "another-fresh-raw-token", new Date(Date.now() + 3600_000).toISOString());
+    const r = await plain.resolveToken("another-fresh-raw-token");
+    expect(r.ok && r.access.secondFactorKind).toBe("dob");
+  });
+
+  it("the store built from configuration passes the configured factor", () => {
+    const src = readFileSync(join(process.cwd(), "src/lib/store/index.ts"), "utf8");
+    expect(src.match(/defaultSecondFactor: cfg\.patientSecondFactor/g), "both build paths must pass it")
+      .toHaveLength(2);
+  });
+});
+
+describe("a pilot can actually be started", () => {
+  /**
+   * Every guarantee in this repository was about protecting records a pilot had
+   * no way to create: patient tokens existed only in the synthetic seed, and the
+   * documented recipe for a clinician account hashed a password by requiring
+   * `./dist/lib/auth/password`, from a `dist/` this project does not build. The
+   * infrastructure was complete and unusable.
+   */
+  it("there is a command to enrol a visit and issue a link", () => {
+    const src = readFileSync(join(process.cwd(), "scripts/pilot.ts"), "utf8");
+    expect(src).toMatch(/async function cmdInvite/);
+    expect(src).toMatch(/invite: cmdInvite/);
+    // One transaction: a visit with no intake is a half-enrolled patient.
+    const body = src.slice(src.indexOf("async function cmdInvite"), src.indexOf("async function cmdCode"));
+    expect(body).toMatch(/driver\.transaction\(/);
+    expect(body).toMatch(/INSERT INTO patients[\s\S]*INSERT INTO visits[\s\S]*INSERT INTO intakes/);
+  });
+
+  it("there is a command to create a clinician account", () => {
+    const src = readFileSync(join(process.cwd(), "scripts/pilot.ts"), "utf8");
+    expect(src).toMatch(/async function cmdClinician/);
+    // The password comes from the environment, not a flag: an argument is in
+    // shell history and in every other user's view of the process list.
+    const body = src.slice(src.indexOf("async function cmdClinician"), src.indexOf("async function cmdInvite"));
+    expect(body).toMatch(/AION_NEW_CLINICIAN_PASSWORD/);
+    expect(body).not.toMatch(/arg\("password"\)/);
+  });
+
+  it("the setup guide no longer tells an operator to require a dist/ that is never built", () => {
+    const doc = readFileSync(join(process.cwd(), "PILOT_SETUP.md"), "utf8");
+    expect(doc).not.toMatch(/dist\/lib\/auth\/password/);
+    expect(doc).toMatch(/pilot:clinician/);
+  });
+});

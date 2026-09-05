@@ -7,6 +7,8 @@
  *   npm run pilot:retention       delete records past their retention window
  *   npm run pilot:reconcile       drain the deletion outbox (photo bytes still owed)
  *   npm run pilot:code -- --intake=int_x   issue a second-factor code for one intake
+ *   npm run pilot:invite -- --practice=... --first=... --last=... --dob=... --when=...
+ *   npm run pilot:clinician -- --practice=... --email=... --name=...   (password from env)
  *
  * Every command works against whatever DATABASE_URL names: a real Postgres
  * server, or in-process Postgres via the "pglite:<dir>" scheme, which is what
@@ -422,6 +424,186 @@ async function cmdReconcile(): Promise<number> {
  * terminal, which is exactly what a developer needs and exactly what a real
  * pilot must not run on.
  */
+/**
+ * Creates one visit and its intake, and prints the patient's link.
+ *
+ * A pilot had no way to do this at all: tokens existed only in the synthetic
+ * seed, so a practice could not enrol a real appointment without writing SQL by
+ * hand. The infrastructure was complete and unusable.
+ *
+ * This is deliberately not scheduling. It creates one appointment because the
+ * intake needs something to belong to, and it stops there — no calendar, no
+ * recurrence, no reminders. The wedge is that the history arrives before the
+ * visit, not that we run the diary.
+ */
+/**
+ * Creates a clinician account.
+ *
+ * PILOT_SETUP told an operator to hash a password with
+ * `node -e "require('./dist/lib/auth/password')"`, against a `dist/` this
+ * project does not build. The first instruction for standing up a real pilot
+ * did not run. There is deliberately no self-service registration and there
+ * should not be — but "no registration" has to mean a command, not a recipe
+ * that fails.
+ */
+async function cmdClinician(): Promise<number> {
+  const cfg = readConfig();
+  if (cfg.mode !== "pilot") {
+    console.error(red("Clinician accounts only exist in pilot mode."));
+    return 1;
+  }
+  const arg = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+  const practiceId = arg("practice");
+  const email = arg("email");
+  const name = arg("name");
+  const credential = arg("credential") ?? "";
+  const password = process.env.AION_NEW_CLINICIAN_PASSWORD;
+  if (!practiceId || !email || !name) {
+    console.error(
+      red("Usage: AION_NEW_CLINICIAN_PASSWORD=... pilot clinician --practice=<id> --email=<addr> --name=<display> [--credential=MD]"),
+    );
+    return 1;
+  }
+  if (!password || password.length < 12) {
+    // Read from the environment, not from a flag: an argument is in the shell
+    // history and in the process list of every other user on the machine.
+    console.error(red("Set AION_NEW_CLINICIAN_PASSWORD (12+ chars). It is read from the environment so it does not land in shell history."));
+    return 1;
+  }
+
+  const { randomBytes } = await import("node:crypto");
+  const { hashPassword } = await import("@/lib/auth/password");
+  const driver = await openDriver();
+  try {
+    const store = new SqlStore(driver, { pepper: cfg.pilot!.tokenPepper });
+    if (!(await store.getPractice(practiceId))) {
+      console.error(red(`No practice ${practiceId}. Create it first.`));
+      return 1;
+    }
+    if (await store.clinicianByEmail(email)) {
+      console.error(red(`An account already exists for ${email}.`));
+      return 1;
+    }
+    const id = `cli_${randomBytes(8).toString("hex")}`;
+    await driver.query(
+      `INSERT INTO clinicians (id, practice_id, email, display_name, credential, password_hash)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, practiceId, email, name, credential, await hashPassword(password)],
+    );
+    console.log(`\n${green("Clinician created.")}`);
+    console.log(`  id:       ${id}`);
+    console.log(`  email:    ${email}`);
+    console.log(`  practice: ${practiceId}`);
+    console.log(yellow("\n  Disable later with: UPDATE clinicians SET disabled_at = now() WHERE id = '" + id + "';"));
+    console.log(yellow("  That takes effect on the very next request — the account is re-read every time.\n"));
+    return 0;
+  } finally {
+    await driver.close();
+  }
+}
+
+async function cmdInvite(): Promise<number> {
+  const cfg = readConfig();
+  if (cfg.mode !== "pilot") {
+    console.error(red("Invites only apply in pilot mode."));
+    return 1;
+  }
+  const arg = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+  const practiceId = arg("practice");
+  const first = arg("first");
+  const last = arg("last");
+  const dob = arg("dob");
+  const when = arg("when");
+  const reason = arg("reason") ?? "";
+  if (!practiceId || !first || !last || !dob || !when) {
+    console.error(
+      red("Usage: pilot invite --practice=<id> --first=<name> --last=<name> --dob=YYYY-MM-DD --when=<iso> [--reason=...]"),
+    );
+    return 1;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+    console.error(red("--dob must be YYYY-MM-DD. It is the default second factor; getting it wrong locks the patient out."));
+    return 1;
+  }
+  if (Number.isNaN(new Date(when).getTime())) {
+    console.error(red("--when must be a parseable date/time."));
+    return 1;
+  }
+
+  const { randomBytes } = await import("node:crypto");
+  const { mintToken } = await import("@/lib/patient/token");
+  const { blankIntake } = await import("@/lib/demo/seed");
+  const driver = await openDriver();
+  try {
+    const store = new SqlStore(driver, {
+      pepper: cfg.pilot!.tokenPepper,
+      defaultSecondFactor: cfg.pilot!.patientSecondFactor,
+    });
+    const practice = await store.getPractice(practiceId);
+    if (!practice) {
+      console.error(red(`No practice ${practiceId}.`));
+      return 1;
+    }
+
+    const id = (prefix: string) => `${prefix}_${randomBytes(8).toString("hex")}`;
+    const patientId = id("pat");
+    const visitId = id("vis");
+    const intakeId = id("int");
+    const rawToken = mintToken();
+    const expiresAt = new Date(
+      Date.now() + cfg.pilot!.patientTokenTtlHours * 3600_000,
+    ).toISOString();
+
+    // One transaction: a visit with no intake, or an intake with no link, is a
+    // half-enrolled patient somebody has to notice and clean up.
+    await driver.transaction(async (tx) => {
+      await tx.query(
+        "INSERT INTO patients (id, practice_id, first_name, last_name, date_of_birth) VALUES ($1,$2,$3,$4,$5)",
+        [patientId, practiceId, first, last, dob],
+      );
+      await tx.query(
+        "INSERT INTO visits (id, practice_id, patient_id, scheduled_for, reason_booked) VALUES ($1,$2,$3,$4,$5)",
+        [visitId, practiceId, patientId, new Date(when).toISOString(), reason],
+      );
+      const intake = { ...blankIntake(visitId), id: intakeId, visitId };
+      await tx.query(
+        `INSERT INTO intakes (id, practice_id, visit_id, status, pathway, urgent_flag, document)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+        [intakeId, practiceId, visitId, intake.status, intake.pathway, false, JSON.stringify(intake)],
+      );
+    });
+    await store.issueToken(intakeId, practiceId, rawToken, expiresAt);
+    await store.appendAudit({
+      action: "intake.created",
+      actorKind: "system",
+      actorId: null,
+      practiceId,
+      resource: "intake",
+      resourceId: intakeId,
+      requestId: null,
+      meta: { factor: cfg.pilot!.patientSecondFactor },
+    });
+
+    console.log(`\n${green("Intake created.")}`);
+    console.log(`  intake:  ${intakeId}`);
+    console.log(`  link:    /intake/${rawToken}`);
+    console.log(`  expires: ${expiresAt} (${cfg.pilot!.patientTokenTtlHours}h)`);
+    console.log(`  factor:  ${cfg.pilot!.patientSecondFactor}`);
+    if (cfg.pilot!.patientSecondFactor !== "dob") {
+      console.log(yellow(`  Issue the secret before sending the link: npm run pilot:code -- --intake=${intakeId}`));
+    }
+    console.log(
+      yellow(
+        "\n  The link is a bearer credential. It is printed once, here, and only its\n" +
+          "  hash is stored — nothing can show it to you again.\n",
+      ),
+    );
+    return 0;
+  } finally {
+    await driver.close();
+  }
+}
+
 async function cmdCode(): Promise<number> {
   const cfg = readConfig();
   if (cfg.mode !== "pilot") {
@@ -538,6 +720,8 @@ const COMMANDS: Record<string, () => Promise<number>> = {
   retention: cmdRetention,
   reconcile: cmdReconcile,
   code: cmdCode,
+  invite: cmdInvite,
+  clinician: cmdClinician,
   backup: cmdBackup,
   restore: cmdRestore,
 };

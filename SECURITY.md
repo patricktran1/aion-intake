@@ -39,7 +39,7 @@ real patient uses it.
   a deliberate pre-product-market-fit choice: zero infrastructure, zero fixed
   cost, and nothing durable to leak.
 - The store sits behind a narrow interface. Swapping it for a real database means
-  implementing eight functions; nothing else in the codebase touches persistence.
+  implementing one interface; nothing else in the codebase touches persistence.
 
 ### Photographs
 
@@ -140,14 +140,24 @@ Non-negotiable, in roughly the order they have to happen.
    is collected.
 2. **Durable, encrypted storage.** Managed Postgres with encryption at rest,
    least-privilege credentials, and audited migrations. Photographs move to
-   object storage with server-side encryption and short-lived signed URLs, not
-   data URLs in a record.
+   object storage with server-side encryption, and are served **through an
+   authorized route**, not by URL — no public URL and no pre-signed one. This
+   line used to require short-lived signed URLs; the architecture deliberately
+   refuses them, because a pre-signed URL is a forwardable, unrevokable bearer
+   token for a photograph of someone's skin. Bytes are fetched server-side after
+   an authorization check and streamed with `Cache-Control: private, no-store`,
+   and the smoke test fails the build if a signing helper appears.
 3. **Real clinician authentication.** Per-user identity with MFA, sessions with
    sane expiry, and role separation between clinician and staff. The shared
-   passphrase must be removed, not extended.
-4. **Real patient linking.** Today the token *is* the identity. A real deployment
-   needs the token bound to a scheduled visit, single-use or short-lived, with a
-   second factor such as date of birth confirmation, and revocation.
+   passphrase must be removed, not extended. *(Partly done: pilot mode has
+   per-user accounts, scrypt password hashing, a signed session with a
+   server-side epoch so logout actually ends it, and CSRF. Still missing: MFA,
+   an identity provider, and any role distinction between clinician and staff.)*
+4. **Real patient linking.** In the demo the token *is* the identity. *(Done in
+   pilot mode: the token is bound to one visit, expires, is revocable, is stored
+   only as a peppered hash, and requires a second factor with a durable
+   five-attempt budget. The remaining weakness is the default factor itself —
+   a date of birth is a weak secret.)*
 5. **An audit log.** Who opened which brief, when, and what they changed —
    append-only, retained, and separate from application logs.
 6. **A retention and deletion policy**, implemented rather than documented, with a

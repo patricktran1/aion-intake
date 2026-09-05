@@ -16,3 +16,11 @@ screenshots/
 # Local pilot workspace — synthetic data, never committed.
 .pglite/
 .objects/
+# Any local database or object directory, not just the two default names. The
+# defaults alone were not enough: a QA run against .pglite-qa committed 39 MB of
+# binary Postgres files, because a rule that lists exact names only protects the
+# names someone thought of.
+.pglite*/
+.objects*/
+*.pglite/
+backup*.json

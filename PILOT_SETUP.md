@@ -38,7 +38,7 @@ Four things you supply for a real pilot, and nothing else:
 
 | | What | Why |
 |---|---|---|
-| 1 | Managed Postgres | Durable records. The whole store is eight functions. |
+| 1 | Managed Postgres | Durable records behind one store interface. |
 | 2 | Private object storage | Photographs, S3-compatible or a mounted volume. |
 | 3 | Two secrets | Session signing and token peppering. |
 | 4 | A retention decision | How long records are kept. There is no safe default. |
@@ -124,17 +124,17 @@ means restoring a backup; see BACKUP below.
 The synthetic seed creates them. For a real pilot, insert them directly —
 there is no self-service registration and there should not be:
 
-```bash
-node -e "
-  const { hashPassword } = require('./dist/lib/auth/password');
-  hashPassword(process.argv[1]).then(console.log);
-" 'the-password'
+```sql
+-- The practice first. There is one row per clinic and it is created by hand.
+INSERT INTO practices (id, name) VALUES ('prac_northgate', 'Northgate Dermatology');
 ```
 
-```sql
-INSERT INTO practices (id, name) VALUES ('prac_northgate', 'Northgate Dermatology');
-INSERT INTO clinicians (id, practice_id, email, display_name, credential, password_hash)
-VALUES ('cli_okonkwo', 'prac_northgate', 'okonkwo@northgate.example', 'A. Okonkwo', 'MD', '<hash>');
+```bash
+# Then each clinician. The password comes from the environment rather than a
+# flag, so it does not land in shell history or in the process list.
+AION_NEW_CLINICIAN_PASSWORD='<a long one>' \
+  npm run pilot:clinician -- --practice=prac_northgate \
+    --email=okonkwo@northgate.example --name='A. Okonkwo' --credential=MD
 ```
 
 Disable an account by setting `disabled_at`. It takes effect on the next

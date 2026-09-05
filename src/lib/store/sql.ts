@@ -97,11 +97,23 @@ export class SqlStore implements Store {
    * the store (migrations, retention) can construct it without one.
    */
   private readonly objects: ObjectStore | null;
+  /**
+   * The factor new tokens are issued with. Comes from configuration, so
+   * AION_PATIENT_SECOND_FACTOR actually decides something: it used to be read
+   * only to print a line in `pilot:check`, which made it a security knob that
+   * changed nothing — the worst kind, because an operator sets it and believes
+   * the factor changed.
+   */
+  private readonly defaultSecondFactor: string;
 
-  constructor(driver: Driver, opts: { pepper: string; objects?: ObjectStore | null }) {
+  constructor(
+    driver: Driver,
+    opts: { pepper: string; objects?: ObjectStore | null; defaultSecondFactor?: string },
+  ) {
     this.driver = driver;
     this.pepper = opts.pepper;
     this.objects = opts.objects ?? null;
+    this.defaultSecondFactor = opts.defaultSecondFactor ?? "dob";
   }
 
   async init(): Promise<void> {
@@ -341,7 +353,7 @@ export class SqlStore implements Store {
     practiceId: string,
     rawToken: string,
     expiresAt: string,
-    secondFactorKind = "dob",
+    secondFactorKind: string = this.defaultSecondFactor,
   ): Promise<void> {
     await this.driver.query(
       `INSERT INTO patient_tokens (intake_id, practice_id, token_hash, expires_at, second_factor_kind)

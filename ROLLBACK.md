@@ -79,8 +79,19 @@ Only when data is actually lost or corrupted, not for a code regression.
    the drift (some briefs show a broken photo; some objects are unreferenced).
 3. Run `npm run pilot:check` and a smoke intake before returning to service.
 
-Rehearse this once, on synthetic data, before the pilot starts. The
-`backup:test` / `restore:test` commands do exactly that locally.
+Rehearse this once, on synthetic data, before the pilot starts:
+
+```bash
+npm run db:backup -- --out=/secure/path/rehearsal.json   # an explicit path is required
+npm run db:restore -- --in=/secure/path/rehearsal.json --confirm
+npm run pilot:reconcile                                   # bytes still owed a deletion
+```
+
+The dump is an unencrypted copy of every patient record and is written 0600.
+Put it on encrypted storage, outside the working tree, and delete it when the
+rehearsal is over. `tests/pilot-backup-load.test.ts` runs the same round-trip
+in CI, including the assertion that a failed restore leaves the database as it
+was rather than half-replaced.
 
 ---
 

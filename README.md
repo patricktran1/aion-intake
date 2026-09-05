@@ -122,7 +122,7 @@ src/
       compose.ts           deterministic brief, HPI, and note
       client.ts            the Anthropic wrapper, with token accounting
       cost.ts              pricing, checked into source
-    store/                 the eight functions a real database would implement
+    store/                 one interface, two adapters: memory and Postgres
     analytics/             ring buffer, PHI-stripping, /api/metrics
     demo/seed.ts           synthetic patients
 tests/                     scenario library, fidelity, failure injection

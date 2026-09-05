@@ -94,13 +94,22 @@ knows anything about authentication. `requireClinician()` in
 What is NOT built: MFA, session revocation short of disabling the account, and
 an identity-provider integration. See SECURITY_REVIEW_PACKET.md.
 
-### 4. Rate limiting becomes shared — NOT YET BUILT
+### 4. Rate limiting becomes shared — BUILT
 
 `src/lib/ratelimit.ts` is an in-process token bucket keyed per intake token —
 deliberately not per IP, because a waiting room is one NAT and per-IP limits
 would throttle the second patient to arrive. In-process is correct for one
-instance. Two instances need shared counters (Redis, or a Postgres table if
-you would rather not add a dependency for a pilot).
+instance; two instances need shared counters.
+
+`src/lib/ratelimit-shared.ts` is that: a Postgres token bucket, chosen over
+Redis so a pilot does not add a second piece of infrastructure to keep
+available. `ratelimit-enforce.ts` dispatches on the runtime mode, so demo stays
+in-process and pilot shares. It **fails open** — a limiter that takes the
+service down when the database blinks has traded a nuisance for an outage.
+
+Every key that identifies anybody is hashed before it becomes a row. That is
+not tidiness: the key used to be the raw patient token, which put live bearer
+credentials in a table, in cleartext, next to the records they open.
 
 ## Deployment shape
 

@@ -120,6 +120,9 @@ export default async function BriefPage({ params }: { params: Promise<{ id: stri
     questionCount: intake.questionCount,
     durationLabel: durationLabel(intake.startedAt, intake.submittedAt),
     aiCostUsd: intake.aiUsage.estimatedCostUsd,
+    // Demo only. See BriefView for why a cost figure has no place on a
+    // clinician's screen during a real encounter.
+    showCost: !pilot,
   };
 
   return <BriefView data={data} />;

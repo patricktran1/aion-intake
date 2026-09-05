@@ -16,7 +16,10 @@ export async function GET(req: Request) {
   return handle(req, "GET /api/clinician/intakes", async () => {
     const scope = await clinicianScope();
     const s = await store();
-    const rows = (await s.listBundles(scope.practiceId)).map(listRow);
+    // No token. The demo worklist page passes includeToken so a founder can
+    // hand over the phone; a clinician API response must never carry a
+    // patient's access credential.
+    const rows = (await s.listBundles(scope.practiceId)).map((b) => listRow(b));
     track("clinician_list_viewed", { count: rows.length });
     return jsonOk({ intakes: rows });
   });

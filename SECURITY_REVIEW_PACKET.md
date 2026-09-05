@@ -39,8 +39,21 @@ npm run attack               # 61 adversarial checks over HTTP, against a
 
 A pre-visit dermatology intake. A patient answers an adaptive interview on
 their phone before an appointment; the dermatologist gets a brief, a draft
-HPI, and a short list of things to clarify in the room. It is not an EHR and
-holds no longitudinal record — one visit, one complaint, one brief.
+HPI, and a short list of things to clarify in the room.
+
+After the visit there is also a **clinician scratchpad** — exam, assessment,
+plan, medications, follow-up — which composes into a draft encounter note the
+physician copies out. This document previously described only the pre-visit
+half, which was the narrower and more flattering half; an independent scope
+review pointed out that the packet and `SCOPE.md` disagreed about what the
+product is. They now agree. It matters to a reviewer because those five fields
+are clinician-authored free text, up to 20,000 characters each, stored in the
+same JSONB document as the patient's answers and subject to the same retention.
+
+It is still not an EHR and holds no longitudinal record: one visit, one
+complaint, one brief. Nothing joins two visits — `intakes_visit_key` enforces
+one intake per appointment, no query groups by patient, and deleting an intake
+deletes the visit and the patient with it.
 
 It runs as one of two things, chosen by `AION_RUNTIME_MODE`:
 

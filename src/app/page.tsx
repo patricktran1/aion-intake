@@ -1,13 +1,27 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Brand } from "@/components/Brand";
 import { DEMO_TOKENS } from "@/lib/demo/seed";
 import { listBundles } from "@/lib/store";
+import { isPilot } from "@/lib/config/runtime";
 import { isModelEnabled, modelName } from "@/lib/ai/client";
 import { ResetButton } from "@/components/ResetButton";
 
 export const dynamic = "force-dynamic";
 
 export default function Home() {
+  // This page is the demo's front door: it reads the in-memory store and links
+  // to fixed demo tokens. In pilot mode the store is empty, so it rendered a
+  // page of dead links to credentials that do not exist — harmless, and exactly
+  // the shape of the bug that left three other pages broken. A pilot's front
+  // door is the sign-in screen.
+  //
+  // It was also missed by tests/pilot-pages.test.ts, whose "no page reads the
+  // memory store unguarded" check walks a hand-written list of three pages that
+  // did not include this one. An exemption by omission is the same failure as
+  // an exemption by name, and harder to see.
+  if (isPilot()) redirect("/clinician/sign-in");
+
   const bundles = listBundles();
   const ready = bundles.filter((b) => b.intake.status === "ready_for_review").length;
   const model = isModelEnabled();

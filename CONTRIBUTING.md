@@ -72,7 +72,7 @@ usually off.
 | `src/lib/interview/harvest.ts` | Reading unasked answers out of what was volunteered |
 | `src/lib/ai/guard.ts` | The hallucination and scope guards |
 | `src/lib/ai/compose.ts` | Brief, headline, deterministic HPI |
-| `src/lib/store/` | Persistence (eight functions) and the write lock |
+| `src/lib/store/` | Persistence (one interface, two adapters) and the write lock |
 | `evals/` | The evaluation lab — see EVALS.md |
 | `tests/` | Unit, route, property, concurrency, mutation pins |
 

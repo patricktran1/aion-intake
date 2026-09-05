@@ -57,6 +57,7 @@ async function buildSqlStore(): Promise<Store> {
     return new SqlStore(await pgliteDriver(dir), {
       pepper: cfg.tokenPepper,
       objects: await objectStore(),
+      defaultSecondFactor: cfg.patientSecondFactor,
     });
   }
   const { Pool } = await import("pg");
@@ -91,7 +92,11 @@ async function buildSqlStore(): Promise<Store> {
     },
     { exclusive: false },
   );
-  return new SqlStore(driver, { pepper: cfg.tokenPepper, objects: await objectStore() });
+  return new SqlStore(driver, {
+    pepper: cfg.tokenPepper,
+    objects: await objectStore(),
+    defaultSecondFactor: cfg.patientSecondFactor,
+  });
 }
 
 /**

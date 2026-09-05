@@ -28,7 +28,7 @@ Today the store is one in-process map (`src/lib/store/index.ts`) that empties on
 restart. A pilot needs managed Postgres with encryption at rest, least-privilege
 credentials, and migrations under review.
 
-The interface is eight functions and nothing else in the codebase touches
+There is one interface and nothing else in the codebase touches
 persistence, so this is a contained change — but it is also the point at which
 the product stops being free to run.
 

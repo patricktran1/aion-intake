@@ -222,7 +222,10 @@ authentication, controlled-substance workflow, and state-level PDMP integration.
 That is a company, not a feature, and building it before the wedge is proven
 would be a category error.
 
-The UX is nonetheless shaped for it: medications are already a distinct field in
-the clinician scratchpad rather than free text buried in the plan, so a future
-prescribing surface has somewhere to attach. Today that field is rendered into the
-draft note and transmitted nowhere.
+Medications are a distinct field in the clinician scratchpad rather than free
+text buried in the plan, because a note is easier to read that way — not as a
+mounting point for a future prescribing surface. An earlier version of this
+paragraph said the second thing, which is scope drift written down as a plan:
+shaping a schema around a category the product has explicitly refused is how the
+refusal stops being real. The field is rendered into the draft note and
+transmitted nowhere, and nothing here should be built toward changing that.

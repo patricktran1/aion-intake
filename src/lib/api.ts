@@ -62,7 +62,15 @@ export function patientView(bundle: IntakeBundle, opts: { token?: string } = {})
 export type PatientView = ReturnType<typeof patientView>;
 
 /** Clinician list row. Enough to triage, not enough to be a chart. */
-export function listRow(bundle: IntakeBundle) {
+/**
+ * @param opts.includeToken demo only. The demo worklist offers "Open link" so a
+ *   founder can hand over the phone; a pilot must never put a patient's access
+ *   credential on a clinician's screen or in a clinician's API response. In
+ *   pilot the value is not even a credential — the real token exists only as a
+ *   peppered hash — so shipping it was a token-shaped string that means nothing,
+ *   which is its own small trap for anyone who finds it in a log.
+ */
+export function listRow(bundle: IntakeBundle, opts: { includeToken?: boolean } = {}) {
   const { intake, visit, patient } = bundle;
   return {
     id: intake.id,
@@ -76,7 +84,7 @@ export function listRow(bundle: IntakeBundle) {
     photoCount: intake.photos.length,
     openQuestionCount: intake.openQuestions.length + intake.patientQuestions.length,
     urgentFlag: intake.urgentFlag,
-    token: intake.token,
+    ...(opts.includeToken ? { token: intake.token } : {}),
   };
 }
 

@@ -75,6 +75,13 @@ export const LIMITS = {
   patientVerify: { burst: 6, refillPerSecond: 0.02 },
   /** Serving photo bytes. Generous: a brief with three photos is one page. */
   photoRead: { burst: 60, refillPerSecond: 1 },
+  /**
+   * Client-reported analytics. Unauthenticated, so this is the one write
+   * surface anyone can reach; the events it records live in a fixed-size ring,
+   * so an unbounded caller could evict every real metric and leave a dashboard
+   * showing only their own traffic. A real session emits a handful.
+   */
+  analytics: { burst: 20, refillPerSecond: 0.1 },
 } as const;
 
 /** @returns true when the request may proceed. */

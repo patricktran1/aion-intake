@@ -248,7 +248,13 @@ export interface Store {
   failObjectDeletion(objectKey: string): Promise<void>;
 
   /** Records past their retention window, for the deletion job to act on. */
-  intakesPastRetention(now: Date): Promise<Array<{ id: string; practiceId: string }>>;
+  /**
+   * @param abandonedBefore also select intakes that were never submitted and
+   *   have been idle since before this time. Omitted, they are left alone —
+   *   which is what the query used to do unconditionally, so an abandoned
+   *   intake had no retention clock at all.
+   */
+  intakesPastRetention(now: Date, abandonedBefore?: Date): Promise<Array<{ id: string; practiceId: string }>>;
   photosPastRetention(now: Date): Promise<Array<{ intakeId: string; photoId: string; objectKey: string }>>;
 
   // --- Audit -------------------------------------------------------------

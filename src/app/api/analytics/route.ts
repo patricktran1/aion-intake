@@ -1,6 +1,8 @@
 import { fail, json } from "@/lib/api";
 import { readJson } from "@/lib/http";
 import { track, type AnalyticsEvent } from "@/lib/analytics";
+import { LIMITS, clientKey } from "@/lib/ratelimit";
+import { enforce } from "@/lib/ratelimit-enforce";
 
 /**
  * The only analytics events a browser may report. Everything else is recorded
@@ -13,8 +15,16 @@ const CLIENT_EVENTS: AnalyticsEvent[] = [
 ];
 
 export async function POST(req: Request) {
-  // Unauthenticated, so the cap matters more here than anywhere: this is the
-  // one write surface reachable with no credential at all.
+  // Unauthenticated by design — a copy-to-clipboard is not worth a credential —
+  // which makes it the one write surface anyone at all can reach. It was also
+  // unlimited, and the in-memory ring it writes into holds a fixed number of
+  // events: a loop against this endpoint evicted every genuine metric and left
+  // a dashboard reporting only what the attacker sent. Bounded per address, and
+  // the body is capped well below anything a real event needs.
+  if (!(await enforce(clientKey(req, "analytics"), LIMITS.analytics))) {
+    return fail("rate_limited", 429);
+  }
+
   let body: unknown;
   try {
     body = await readJson(req, 4 * 1024);

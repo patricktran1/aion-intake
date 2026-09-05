@@ -387,3 +387,67 @@ describe("guarantees the shipped client can actually reach", () => {
     expect(body).toMatch(/idempotencyKey/);
   });
 });
+
+describe("retention deletes the person, not only the paperwork", () => {
+  it("an abandoned intake has a retention clock", async () => {
+    // The query required submitted_at IS NOT NULL, so a patient who opened
+    // their link, typed a symptom and closed the tab left a record that no job
+    // would ever collect. "Forever" is the one outcome a retention policy is
+    // there to rule out.
+    const t = f.seed.tokens.find((x) => x.state === "active")!;
+    await f.driver.query(
+      "UPDATE intakes SET submitted_at = NULL, last_activity_at = now() - interval '90 days' WHERE id = $1",
+      [t.intakeId],
+    );
+    // Without the abandoned cutoff it is invisible, exactly as before.
+    const ignored = await f.store.intakesPastRetention(new Date());
+    expect(ignored.map((r) => r.id)).not.toContain(t.intakeId);
+    // With it, it is collected.
+    const due = await f.store.intakesPastRetention(new Date(), new Date(Date.now() - 30 * 86400_000));
+    expect(due.map((r) => r.id)).toContain(t.intakeId);
+  });
+
+  it("deleting an intake also removes the patient's name and date of birth", async () => {
+    // Deleting the intake alone left `patients` (name, exact date of birth) and
+    // `visits` (appointment time, reason booked) intact. The clinical content
+    // was gone while the fact that a named person had a dermatology appointment
+    // for a stated reason remained indefinitely.
+    const t = f.seed.tokens.find((x) => x.state === "active")!;
+    const { rows: before } = await f.driver.query<{ patient_id: string; visit_id: string }>(
+      "SELECT v.patient_id, v.id AS visit_id FROM intakes i JOIN visits v ON v.id = i.visit_id WHERE i.id = $1",
+      [t.intakeId],
+    );
+    expect(before).toHaveLength(1);
+
+    await f.store.deleteIntake(t.intakeId);
+
+    const visit = await f.driver.query("SELECT id FROM visits WHERE id = $1", [before[0].visit_id]);
+    expect(visit.rows, "the appointment must not outlive the record").toHaveLength(0);
+    const patient = await f.driver.query("SELECT id FROM patients WHERE id = $1", [before[0].patient_id]);
+    expect(patient.rows, "the name and date of birth must not outlive the record").toHaveLength(0);
+  });
+
+  it("a patient with another appointment inside the window survives", async () => {
+    // Deleting one visit's intake must not erase a patient who is still
+    // expected in the clinic next week.
+    const t = f.seed.tokens.find((x) => x.state === "active")!;
+    const { rows } = await f.driver.query<{ patient_id: string }>(
+      "SELECT v.patient_id FROM intakes i JOIN visits v ON v.id = i.visit_id WHERE i.id = $1",
+      [t.intakeId],
+    );
+    const patientId = rows[0].patient_id;
+    await f.driver.query(
+      "INSERT INTO visits (id, practice_id, patient_id, scheduled_for) VALUES ('vis_future','prac_northgate',$1, now() + interval '7 days')",
+      [patientId],
+    );
+
+    await f.store.deleteIntake(t.intakeId);
+    const still = await f.driver.query("SELECT id FROM patients WHERE id = $1", [patientId]);
+    expect(still.rows).toHaveLength(1);
+  });
+
+  it("the retention job passes the abandoned cutoff", () => {
+    const src = readFileSync(join(process.cwd(), "scripts/pilot.ts"), "utf8");
+    expect(src).toMatch(/intakesPastRetention\(intakeCutoff, abandonedCutoff\)/);
+  });
+});

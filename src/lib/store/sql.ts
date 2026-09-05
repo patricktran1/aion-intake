@@ -430,7 +430,37 @@ export class SqlStore implements Store {
       // ON DELETE CASCADE removes photos and the patient token. Audit events
       // are not children of the intake and deliberately survive: they are the
       // record that the deletion happened.
+      const { rows: visitRows } = await tx.query<{ visit_id: string }>(
+        "SELECT visit_id FROM intakes WHERE id = $1",
+        [id],
+      );
       await tx.query("DELETE FROM intakes WHERE id = $1", [id]);
+
+      // And the identity the intake was about. Deleting the intake alone left
+      // the patient's name and exact date of birth in `patients`, and the
+      // appointment time and reason booked in `visits` — so "the record was
+      // deleted" meant the clinical content was gone while the fact that a
+      // named person had a dermatology appointment for a stated reason
+      // remained, indefinitely. This product holds one visit per intake and no
+      // longitudinal record, so a visit with no intake has nothing left to be,
+      // and a patient with no visits has no reason to exist here.
+      const visitId = visitRows[0]?.visit_id;
+      if (visitId) {
+        const { rows: patientRows } = await tx.query<{ patient_id: string }>(
+          "DELETE FROM visits WHERE id = $1 RETURNING patient_id",
+          [visitId],
+        );
+        const patientId = patientRows[0]?.patient_id;
+        if (patientId) {
+          // Only when nothing else references them: a patient with a second
+          // appointment inside the retention window is still a live record.
+          await tx.query(
+            `DELETE FROM patients
+              WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM visits WHERE patient_id = $1)`,
+            [patientId],
+          );
+        }
+      }
       return { deleted: true, photoKeys: keys.map((k) => k.object_key) };
     });
 
@@ -469,12 +499,28 @@ export class SqlStore implements Store {
     return { objectKey };
   }
 
-  async intakesPastRetention(now: Date): Promise<Array<{ id: string; practiceId: string }>> {
+  /**
+   * @param now the submitted-intake cutoff.
+   * @param abandonedBefore the cutoff for intakes that were never submitted.
+   *   Without it these were never selected at all: the clause required
+   *   submitted_at IS NOT NULL, so a patient who opened their link, typed a
+   *   symptom and closed the tab left a record with no retention clock on it —
+   *   it stayed forever, which is the one outcome a retention policy exists to
+   *   rule out. An abandoned intake holds less than a completed one and is not
+   *   nothing.
+   */
+  async intakesPastRetention(
+    now: Date,
+    abandonedBefore?: Date,
+  ): Promise<Array<{ id: string; practiceId: string }>> {
     const { rows } = await this.driver.query<{ id: string; practice_id: string }>(
       `SELECT id, practice_id FROM intakes
-        WHERE deleted_at IS NULL AND submitted_at IS NOT NULL
-          AND submitted_at < $1`,
-      [now.toISOString()],
+        WHERE deleted_at IS NULL
+          AND (
+            (submitted_at IS NOT NULL AND submitted_at < $1)
+            OR (submitted_at IS NULL AND $2::timestamptz IS NOT NULL AND last_activity_at < $2)
+          )`,
+      [now.toISOString(), abandonedBefore ? abandonedBefore.toISOString() : null],
     );
     return rows.map((r) => ({ id: r.id, practiceId: r.practice_id }));
   }

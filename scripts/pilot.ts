@@ -46,6 +46,19 @@ async function openDriver(): Promise<Driver> {
         const res = await pool.query(sql, params as never[]);
         return { rows: res.rows, rowCount: res.rowCount ?? 0 };
       },
+      // Without this a transaction is spread across the pool: BEGIN on one
+      // connection, the work on others. The migration and restore commands both
+      // rely on a transaction meaning something.
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (sql: string, params?: unknown[]) => {
+            const res = await client.query(sql, params as never[]);
+            return { rows: res.rows, rowCount: res.rowCount ?? 0 };
+          },
+          release: () => client.release(),
+        };
+      },
       close: () => pool.end(),
     },
     { exclusive: false },
@@ -283,11 +296,18 @@ async function cmdRetention(): Promise<number> {
     const intakeCutoff = new Date(Date.now() - cfg.pilot!.intakeRetentionDays * 86400_000);
 
     const duePhotos = await store.photosPastRetention(photoCutoff);
-    const dueIntakes = await store.intakesPastRetention(intakeCutoff);
+    // An intake nobody ever submitted had no retention clock at all: the query
+    // required a submitted_at. A patient who opened their link, typed a symptom
+    // and closed the tab left a record that stayed forever. It is held to the
+    // photo window, which is the shorter of the two — an abandoned intake holds
+    // less than a completed one, and there is less reason to keep it.
+    const abandonedCutoff = photoCutoff;
+    const dueIntakes = await store.intakesPastRetention(intakeCutoff, abandonedCutoff);
 
     console.log(`\nRetention (${dryRun ? "dry run — pass --apply to delete" : "APPLYING"})`);
     console.log(`  photos older than ${cfg.pilot!.photoRetentionDays}d : ${duePhotos.length}`);
-    console.log(`  intakes submitted over ${cfg.pilot!.intakeRetentionDays}d ago : ${dueIntakes.length}`);
+    console.log(`  intakes submitted over ${cfg.pilot!.intakeRetentionDays}d ago,`);
+    console.log(`    plus never-submitted intakes idle over ${cfg.pilot!.photoRetentionDays}d : ${dueIntakes.length}`);
 
     if (!dryRun) {
       // Both paths write the row delete and the intent to delete the bytes in
@@ -385,12 +405,25 @@ async function cmdBackup(): Promise<number> {
   const { writeFileSync } = await import("node:fs");
   const driver = await openDriver();
   try {
-    const out = args.find((a) => a.startsWith("--out="))?.slice("--out=".length) ?? "backup.json";
+    const out = args.find((a) => a.startsWith("--out="))?.slice("--out=".length) ?? "";
+    if (!out) {
+      console.error(
+        red("Refusing to write a backup without an explicit --out= path.") +
+          "\nThis file is an UNENCRYPTED dump of every patient record: names, dates of birth," +
+          "\ninterview transcripts and photo keys. It defaulted to ./backup.json, which is" +
+          "\ninside the repository — one `git add -A` from being committed, and readable by" +
+          "\nanything else running on the machine. Choose a path on encrypted storage," +
+          "\noutside the working tree, and delete it when the rehearsal is over.",
+      );
+      return 1;
+    }
     const backup = await dumpDatabase(driver, new Date(0).toISOString());
     // Stamp the time outside the workflow-free path; Date is available in scripts.
     backup.takenAt = new Date().toISOString();
     const total = Object.values(backup.tables).reduce((n, rows) => n + rows.length, 0);
-    writeFileSync(out, JSON.stringify(backup, null, 2));
+    // Owner-only. The default was whatever the process umask allowed, which on
+    // a shared host is world-readable — for a file holding every patient record.
+    writeFileSync(out, JSON.stringify(backup, null, 2), { mode: 0o600 });
     console.log(green(`Wrote ${total} rows across ${Object.keys(backup.tables).length} tables to ${out}`));
     console.log(yellow("This is a LOGICAL dump for rehearsal. Production backup is the provider's PITR — see PILOT_SETUP.md."));
     return 0;

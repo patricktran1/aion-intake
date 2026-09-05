@@ -65,11 +65,27 @@ async function buildSqlStore(): Promise<Store> {
   const { objectStore } = await import("@/lib/objects/select");
   // A pool hands each transaction its own connection, so transactions may
   // overlap freely; serialising them would be a self-inflicted bottleneck.
+  //
+  // `connect` is what makes that true rather than aspirational. Without it,
+  // BEGIN and the statements after it went to whichever connection happened to
+  // be free, so the transaction was spread across the pool: no row lock
+  // outlived its statement, and the connection that received the BEGIN went
+  // back to the pool still inside one.
   const driver = driverFrom(
     {
       query: async (sql: string, params?: unknown[]) => {
         const res = await pool.query(sql, params as never[]);
         return { rows: res.rows, rowCount: res.rowCount ?? 0 };
+      },
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (sql: string, params?: unknown[]) => {
+            const res = await client.query(sql, params as never[]);
+            return { rows: res.rows, rowCount: res.rowCount ?? 0 };
+          },
+          release: () => client.release(),
+        };
       },
       close: () => pool.end(),
     },

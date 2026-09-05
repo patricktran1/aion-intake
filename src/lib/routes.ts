@@ -42,12 +42,14 @@ export const ROUTES: RouteSpec[] = [
   },
   {
     path: "/api/intake/[token]/verify",
-    methods: ["POST"],
+    methods: ["GET", "POST"],
     auth: "public",
     writes: true,
     note:
-      "The second factor itself, so it cannot require having passed it. Rate limited " +
-      "per token, and failures are counted durably — five wrong answers kill the token.",
+      "The second factor itself, so it cannot require having passed it. GET returns only " +
+      "which question to ask, never anything about the answer, and 404s for an unknown " +
+      "token so it cannot confirm which links exist. Rate limited per token, and failures " +
+      "are counted durably — five wrong answers kill the token.",
   },
   {
     path: "/api/intake/[token]/start",

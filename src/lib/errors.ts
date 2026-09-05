@@ -68,7 +68,9 @@ const SPECS: Record<ErrorCode, Spec> = {
   INTAKE_NOT_STARTED: { status: 409, message: "This intake hasn't been started yet.", retryable: false },
   VERIFICATION_REQUIRED: {
     status: 401,
-    message: "Please confirm your date of birth to open this intake.",
+    // Deliberately does not name the factor: which one is in force is a per-token
+    // fact, and the screen gets the exact wording from the challenge endpoint.
+    message: "Please confirm it's you before opening this intake.",
     retryable: false,
   },
   VERIFICATION_FAILED: {

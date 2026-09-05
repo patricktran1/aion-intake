@@ -142,6 +142,25 @@ async function cmdCheck(): Promise<number> {
         "(a configured value, NOT a legal determination)",
     );
 
+    const factor = cfg.pilot!.patientSecondFactor;
+    add(
+      "patient second factor chosen",
+      true,
+      factor === "dob"
+        ? "date of birth — a weak factor that stops a forwarded link, not a determined party"
+        : factor === "code"
+          ? "practice-issued code — the practice must actually issue one per visit, or patients are locked out"
+          : "one-time code",
+    );
+    if (factor === "otp") {
+      // The only delivery adapter that ships prints the code to the log.
+      add(
+        "one-time code delivery",
+        false,
+        "no delivery provider is integrated — the console adapter prints codes to the server log",
+      );
+    }
+
     // 2. Database reachable and migrated.
     try {
       const driver = await openDriver();

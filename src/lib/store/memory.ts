@@ -169,6 +169,11 @@ export class MemoryStore implements Store {
         revokedAt: null,
         verifiedAt: new Date(0).toISOString(),
         failedVerifications: 0,
+        // The demo has no second factor: a link handed out at a conference
+        // cannot be gated on a synthetic patient's date of birth.
+        secondFactorKind: "dob",
+        secondFactorHash: null,
+        secondFactorExpiresAt: null,
       },
     };
   }
@@ -182,6 +187,7 @@ export class MemoryStore implements Store {
     return 0;
   }
   async revokeToken(): Promise<void> {}
+  async setSecondFactor(): Promise<void> {}
 
   async withIntake<T>(
     id: string,

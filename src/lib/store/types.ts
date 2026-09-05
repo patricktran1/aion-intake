@@ -88,6 +88,16 @@ export interface PatientAccess {
   /** True once the patient has passed the second factor for this token. */
   verifiedAt: string | null;
   failedVerifications: number;
+  /**
+   * The second factor this token was issued with. Recorded per token, not read
+   * from configuration at verification time: a practice changing its policy
+   * must not lock out patients already holding links.
+   */
+  secondFactorKind: string;
+  /** Peppered hash of the expected value. Null for the date-of-birth factor. */
+  secondFactorHash: string | null;
+  /** When a one-time value stops being acceptable. Null when it does not expire. */
+  secondFactorExpiresAt: string | null;
 }
 
 export type AccessResult =
@@ -149,6 +159,17 @@ export interface Store {
   markVerified(intakeId: string): Promise<void>;
   recordVerificationFailure(intakeId: string): Promise<number>;
   revokeToken(intakeId: string): Promise<void>;
+  /**
+   * Sets the secret for a code- or OTP-based second factor. Passing a null hash
+   * clears it, which locks the token rather than opening it — see
+   * patient/second-factor.ts.
+   */
+  setSecondFactor(
+    intakeId: string,
+    kind: string,
+    hash: string | null,
+    expiresAt: string | null,
+  ): Promise<void>;
 
   // --- Atomic write ------------------------------------------------------
   /**

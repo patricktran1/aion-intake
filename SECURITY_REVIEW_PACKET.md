@@ -89,19 +89,35 @@ disabling the account. The intended endpoint is OIDC; `requireClinician()` in
   dump yields no working links.
 - Expiry (`AION_PATIENT_TOKEN_TTL_HOURS`, default 72) and revocation are both
   evaluated in SQL at resolution time.
-- Second factor: date of birth, normalised across common formats, compared in
-  constant time. Five failures kill the token permanently; the counter is in
+- Second factor: a strategy chosen by `AION_PATIENT_SECOND_FACTOR`, recorded
+  **per token** so a practice changing policy cannot lock out links already in
+  patients' hands. Five failures kill the token permanently; the counter is in
   the database, so it survives restarts and cannot be reset by hitting another
-  instance.
+  instance. That durable budget is the load-bearing control for the code-based
+  strategies — it makes the online guess budget five rather than unbounded.
 - SHA-256 rather than a slow KDF is deliberate: the input is 256 bits of
   entropy, so there is no dictionary to slow down, and lookup is by token hash
   on the request path.
 
-**Where we think this is weakest:** date of birth is a weak second factor —
-family members know it, and it is often discoverable. It defends against the
-actual pilot threat (a forwarded SMS) and not against a determined party who
-already holds the link. A practice-issued one-time code would be stronger and
-the mechanism supports it; nobody has decided to require one.
+**Three strategies, one default** (`src/lib/patient/second-factor.ts`):
+
+| | Factor | Strength | What it costs | Ships |
+|---|---|---|---|---|
+| A | Date of birth | Weak — family members know it | Nothing | **Default, and what the pilot runs** |
+| B | Practice-issued code, given at booking | Real second channel | Front-desk work every visit; a patient without the card is locked out at 9pm | Implemented, off |
+| C | One-time code to the contact on file | Strongest | A delivery provider, a cost, another processor touching contact details — and if the link and the code land on the same handset it is not a second channel at all | Implemented against a **console adapter only**; no SMS or email provider is integrated |
+
+The patient sees one field and one line of instruction whichever is active; the
+screen renders the challenge the strategy supplies, so a third strategy never
+becomes a third control on the patient's screen. All three fail closed: a
+strategy with nothing to compare against rejects, never admits.
+
+**Where we think this is weakest:** the default is A, and A is weak — family
+members know a date of birth, and it is often discoverable. It defends against
+the actual pilot threat (a forwarded SMS) and not against a determined party
+who already holds the link. B and C exist so that a practice which disagrees
+can change a setting rather than wait for a release; nobody has decided to
+require one, and C has no real delivery adapter behind it.
 
 Also: the token is in the URL path, so it can land in browser history and in
 any intermediary that logs full URLs. The expiry and second factor exist
@@ -222,8 +238,9 @@ If you have limited time, spend it here:
 1. **Tenancy in application code rather than RLS.** Look for any query path
    that could reach an intake without a practice id — particularly anything
    added after this document was written.
-2. **Date of birth as the second factor.** Is it enough for the threat you
-   think a pilot faces?
+2. **Date of birth as the default second factor.** Is it enough for the threat
+   you think a pilot faces? If not, is B or C actually reachable for a small
+   practice, or is the honest answer that the link should be shorter-lived?
 3. **The patient token in the URL path.** History, referrers, proxy logs.
 4. **Session revocation.** A stolen cookie is valid for up to 12 hours unless
    the account is disabled.

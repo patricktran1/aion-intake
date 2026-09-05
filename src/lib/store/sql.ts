@@ -241,7 +241,8 @@ export class SqlStore implements Store {
     const hash = hashToken(rawToken, this.pepper);
     const { rows } = await this.driver.query<Record<string, unknown>>(
       `SELECT t.intake_id, t.practice_id, t.expires_at, t.revoked_at, t.verified_at,
-              t.failed_verifications, i.visit_id
+              t.failed_verifications, t.second_factor_kind, t.second_factor_hash,
+              t.second_factor_expires_at, i.visit_id
          FROM patient_tokens t
          JOIN intakes i ON i.id = t.intake_id AND i.deleted_at IS NULL
         WHERE t.token_hash = $1`,
@@ -265,6 +266,9 @@ export class SqlStore implements Store {
         revokedAt: null,
         verifiedAt: iso(r.verified_at),
         failedVerifications: Number(r.failed_verifications),
+        secondFactorKind: String(r.second_factor_kind ?? "dob"),
+        secondFactorHash: r.second_factor_hash ? String(r.second_factor_hash) : null,
+        secondFactorExpiresAt: iso(r.second_factor_expires_at),
       },
     };
   }
@@ -300,15 +304,41 @@ export class SqlStore implements Store {
     );
   }
 
-  /** Issues a fresh token, replacing any existing one for this intake. */
-  async issueToken(intakeId: string, practiceId: string, rawToken: string, expiresAt: string): Promise<void> {
+  async setSecondFactor(
+    intakeId: string,
+    kind: string,
+    hash: string | null,
+    expiresAt: string | null,
+  ): Promise<void> {
     await this.driver.query(
-      `INSERT INTO patient_tokens (intake_id, practice_id, token_hash, expires_at)
-       VALUES ($1, $2, $3, $4)
+      `UPDATE patient_tokens
+          SET second_factor_kind = $2, second_factor_hash = $3, second_factor_expires_at = $4,
+              -- A new factor means the old proof no longer stands, and the
+              -- attempt budget resets so a patient is not locked out by
+              -- failures against a factor that is no longer in force.
+              verified_at = NULL, failed_verifications = 0
+        WHERE intake_id = $1`,
+      [intakeId, kind, hash, expiresAt],
+    );
+  }
+
+  /** Issues a fresh token, replacing any existing one for this intake. */
+  async issueToken(
+    intakeId: string,
+    practiceId: string,
+    rawToken: string,
+    expiresAt: string,
+    secondFactorKind = "dob",
+  ): Promise<void> {
+    await this.driver.query(
+      `INSERT INTO patient_tokens (intake_id, practice_id, token_hash, expires_at, second_factor_kind)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (intake_id) DO UPDATE
          SET token_hash = EXCLUDED.token_hash, expires_at = EXCLUDED.expires_at,
+             second_factor_kind = EXCLUDED.second_factor_kind,
+             second_factor_hash = NULL, second_factor_expires_at = NULL,
              revoked_at = NULL, verified_at = NULL, failed_verifications = 0`,
-      [intakeId, practiceId, hashToken(rawToken, this.pepper), expiresAt],
+      [intakeId, practiceId, hashToken(rawToken, this.pepper), expiresAt, secondFactorKind],
     );
   }
 

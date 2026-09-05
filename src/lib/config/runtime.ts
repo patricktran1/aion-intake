@@ -19,6 +19,8 @@
  * one that does not boot.
  */
 
+import { SECOND_FACTOR_KINDS, type SecondFactorKind } from "@/lib/patient/second-factor";
+
 export type RuntimeMode = "demo" | "pilot";
 
 /** Anything that reads like an environment. Keeps tests from having to fake NODE_ENV. */
@@ -69,6 +71,12 @@ export interface PilotConfig {
   intakeRetentionDays: number;
   /** Hours a patient access token stays valid after being issued. */
   patientTokenTtlHours: number;
+  /**
+   * Which second factor a patient must pass. Explicit, never inferred — see
+   * patient/second-factor.ts for the three strategies and their tradeoffs.
+   * Defaults to date of birth, the only one with no operational dependency.
+   */
+  patientSecondFactor: SecondFactorKind;
 }
 
 export interface RuntimeConfig {
@@ -184,6 +192,12 @@ export function readConfig(env: EnvLike = process.env): RuntimeConfig {
     problems.push("AION_PATIENT_TOKEN_TTL_HOURS must be a whole number of hours between 1 and 720");
   }
 
+  const sfRaw = (env.AION_PATIENT_SECOND_FACTOR ?? "dob").trim().toLowerCase();
+  if (!(SECOND_FACTOR_KINDS as readonly string[]).includes(sfRaw)) {
+    problems.push(`AION_PATIENT_SECOND_FACTOR must be one of ${SECOND_FACTOR_KINDS.join(", ")}`);
+  }
+  const patientSecondFactor = sfRaw as SecondFactorKind;
+
   // The demo reset endpoint wipes and reseeds the store. In pilot mode that
   // would destroy real records, so it must be off — and being explicit about
   // it beats relying on the route to check the mode correctly forever.
@@ -204,6 +218,7 @@ export function readConfig(env: EnvLike = process.env): RuntimeConfig {
       photoRetentionDays,
       intakeRetentionDays,
       patientTokenTtlHours,
+      patientSecondFactor,
     },
   };
 }

@@ -61,17 +61,35 @@ function store(): AnalyticsStore {
 /** Allowlisted key shapes. Anything else is dropped before it can leak. */
 const SAFE_KEY = /^[a-z][a-z0-9_]{0,40}$/;
 const DENY_SUBSTRINGS = ["text", "answer", "verbatim", "name", "photo_data", "email", "dob"];
+/**
+ * What a value may look like: an identifier or an enum, never prose. Same rule
+ * the structured logger applies, and for the same reason — these two are the
+ * places where clinical content leaks by accident rather than by decision.
+ */
+const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,63}$/;
 
 function sanitize(props: EventProps): EventProps {
   const out: EventProps = {};
   for (const [k, v] of Object.entries(props)) {
     if (!SAFE_KEY.test(k)) continue;
     if (DENY_SUBSTRINGS.some((d) => k.includes(d))) continue;
-    if (typeof v === "string") out[k] = v.slice(0, 64);
+    // The key allowlist says WHICH facts may be recorded; it says nothing about
+    // what a value contains. A caller passing a patient-influenced string under
+    // an allowlisted key — a slot name, a pathway — put free text into the
+    // analytics store, which is the one place that is meant to hold none. So
+    // values are shaped too: an identifier, not a sentence. Anything else is
+    // dropped rather than truncated, because half a sentence is still a
+    // sentence and truncation hides the mistake instead of surfacing it.
+    if (typeof v === "string") {
+      if (IDENTIFIER.test(v)) out[k] = v;
+    }
     else if (typeof v === "number" || typeof v === "boolean") out[k] = v;
   }
   return out;
 }
+
+/** Exposed so a test can assert the field policy directly, as the logger does. */
+export const __analyticsTesting = { sanitize };
 
 export function track(event: AnalyticsEvent, props: EventProps = {}): void {
   const record: TrackedEvent = { event, at: new Date().toISOString(), props: sanitize(props) };

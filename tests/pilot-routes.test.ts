@@ -74,8 +74,19 @@ describe("each authorization class is actually implemented", () => {
       // CLINICIAN_ACCESS_CODE is set, which pilot configuration never sets. The
       // carve-out made the suite green and the matrix false, which is the one
       // thing a matrix test must not do.
-      const guarded = /clinicianScope|clinicianWriteScope|requireClinician/.test(src);
-      expect(guarded, `${r.path} claims "clinician" but calls no clinician guard`).toBe(true);
+      //
+      // AWAITED, not merely present. Every guard is async and throws; calling
+      // one without awaiting produces a floating rejection and a route that
+      // carries on serving. `requireClinician()` on its own line reads exactly
+      // like the real thing in a diff and stops the guard from guarding — which
+      // is the failure mode of a check that greps for a name.
+      const guarded = /await\s+(clinicianScope|clinicianWriteScope|requireClinician)\s*\(/.test(src);
+      expect(guarded, `${r.path} claims "clinician" but calls no AWAITED clinician guard`).toBe(true);
+      const unawaited = src.match(/(?<!await\s)(?<!\.)\b(clinicianScope|clinicianWriteScope|requireClinician)\s*\(/g);
+      expect(
+        unawaited,
+        `${r.path} calls a guard without awaiting it — a floating rejection, and the route serves anyway`,
+      ).toBeNull();
     }
   });
 

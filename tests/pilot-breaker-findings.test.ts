@@ -590,3 +590,55 @@ describe("the clinician screen can actually write", () => {
     expect(writes, "a clinician write that bypasses send() skips the CSRF header").toHaveLength(0);
   });
 });
+
+
+describe("patient text never carries invisible characters into a clinical document", () => {
+  /**
+   * `sanitizeText` strips C0/C1 control codes, zero-width characters and — the
+   * one that matters — Unicode bidi overrides, which can visually reorder a
+   * line as a physician reads it: move which side of a "no" a symptom falls on.
+   * Two paths skipped it, and one of them was the field the brief presents as
+   * the patient's own words.
+   *
+   * The payloads are written as escapes rather than literals on purpose. These
+   * characters are invisible in a diff, in a review, and in most terminals,
+   * which is the entire reason they are worth stripping.
+   */
+  it("the review-screen edit sanitises the verbatim, not only the tidied value", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/api/intake/[token]/facts/route.ts"), "utf8");
+    expect(src).toMatch(/verbatim: sanitizeText\(value\)/);
+    expect(src).not.toMatch(/verbatim: value,/);
+  });
+
+  it("the photo caption is sanitised too", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/api/intake/[token]/photos/route.ts"), "utf8");
+    expect(src).toMatch(/sanitizeText\(b\.caption\)/);
+  });
+
+  it("sanitizeText removes bidi overrides, zero-width and control characters", async () => {
+    const { sanitizeText } = await import("@/lib/interview/engine");
+    expect(sanitizeText("\u202Ehidden\u202C")).toBe("hidden");
+    expect(sanitizeText("a\u200Bb")).toBe("ab");
+    expect(sanitizeText("x\u0007y")).toBe("xy");
+    expect(sanitizeText("no\u2066 \u2069allergies")).toBe("no allergies");
+    // Ordinary whitespace is a patient typing, not an attack.
+    expect(sanitizeText("two\nlines\there")).toBe("two\nlines\there");
+  });
+});
+
+describe("analytics values are shaped, not just their keys", () => {
+  it("drops a value that reads as prose", async () => {
+    const { __analyticsTesting } = await import("@/lib/analytics");
+    // An allowlisted key said WHICH fact may be recorded and nothing about what
+    // the value held, so a patient-influenced string under an allowlisted key
+    // put free text into the one store meant to hold none.
+    const cleaned = __analyticsTesting.sanitize({
+      slot: "onset",
+      pathway: "a whole sentence a patient typed",
+      count: 3,
+    });
+    expect(cleaned.slot).toBe("onset");
+    expect(cleaned.pathway, "prose must be dropped, not truncated").toBeUndefined();
+    expect(cleaned.count).toBe(3);
+  });
+});

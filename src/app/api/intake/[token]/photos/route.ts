@@ -6,6 +6,7 @@ import { LIMITS, intakeKey } from "@/lib/ratelimit";
 import { enforce } from "@/lib/ratelimit-enforce";
 import { MAX_UPLOAD_BYTES, checkPhoto, inspectDataUrl, isAcceptedDataUrl } from "@/lib/photos";
 import { AppError } from "@/lib/errors";
+import { sanitizeText } from "@/lib/interview/engine";
 import { audit } from "@/lib/audit";
 import { track } from "@/lib/analytics";
 
@@ -45,7 +46,9 @@ export async function POST(req: Request, { params }: Params) {
     const dataUrl = typeof b.dataUrl === "string" ? b.dataUrl : "";
     const mime = typeof b.mime === "string" ? b.mime : "";
     const kind = b.kind === "wide" || b.kind === "close" ? b.kind : "unspecified";
-    const caption = typeof b.caption === "string" ? b.caption.slice(0, 120) : "";
+    // Stored and rendered beside a photograph on the clinician's brief, so it
+    // gets the same treatment as every other piece of patient text.
+    const caption = typeof b.caption === "string" ? sanitizeText(b.caption).slice(0, 120) : "";
     const sharpness = typeof b.sharpness === "number" ? b.sharpness : undefined;
     // A client-supplied idempotency key lets a retried upload converge to one
     // photo rather than duplicating on a flaky connection.

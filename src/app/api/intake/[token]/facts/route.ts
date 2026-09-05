@@ -4,7 +4,7 @@ import { requireVerifiedPatient } from "@/lib/patient/access";
 import { store } from "@/lib/store";
 import { LIMITS, intakeKey } from "@/lib/ratelimit";
 import { enforce } from "@/lib/ratelimit-enforce";
-import { classifyCertainty, tidy } from "@/lib/interview/engine";
+import { classifyCertainty, tidy, sanitizeText } from "@/lib/interview/engine";
 import { AppError } from "@/lib/errors";
 import { track } from "@/lib/analytics";
 
@@ -42,7 +42,12 @@ export async function PATCH(req: Request, { params }: Params) {
         facts.push({
           slot,
           value: tidy(value),
-          verbatim: value,
+          // Sanitised, not raw. `tidy` already runs sanitizeText; this field
+          // skipped it, and it is the one a physician reads as the patient's
+          // own words under "Show patient's own words". A bidi override there
+          // can visually reorder a line — swap which side of "no" a symptom
+          // falls on — in the exact place the brief asks to be trusted.
+          verbatim: sanitizeText(value),
           certainty: classifyCertainty(value),
           source: "patient",
           at: new Date().toISOString(),
